@@ -1,13 +1,74 @@
 # 9cz2 Research — Session Context
 
+---
+
+## SESSION SETUP — Do This First Every Session
+
+**This section is for Claude to act on immediately when a new session starts.**
+
+### Step 1 — Open the SSH ControlMaster socket (user action required)
+
+The Bash tool reaches Midway3 by tunneling through an SSH ControlMaster socket on the local machine. This socket expires after 1 hour of inactivity. Without it, every `ssh midway3` command will fail with an authentication error.
+
+**Tell the user:**
+
+> Before we can access Midway3, open a local terminal and run:
+> ```
+> ssh midway3
+> ```
+> Complete the DUO two-factor authentication prompt. You can then leave that terminal open or close it — the socket persists for 1 hour (`ControlPersist 1h` in `~/.ssh/config`). Let me know when done.
+
+### Step 2 — Verify the connection
+
+Once the user confirms, verify the socket is alive:
+
+```bash
+ssh midway3 "echo OK"
+```
+
+If it prints `OK` immediately (no DUO prompt), the connection is ready. If it fails or prompts for DUO again, ask the user to re-run `ssh midway3` in their local terminal.
+
+### Step 3 — Run the startup status check
+
+After the connection is confirmed, run these two commands and report the results:
+
+```bash
+# Active and pending jobs
+ssh midway3 "squeue -u junseo --format='%.10i %.12j %.6D %.8T %.10M %.10l %Z'"
+```
+
+```bash
+# Progress of the control system
+ssh midway3 "ls /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_*.coor 2>/dev/null | sort | tail -1"
+```
+
+```bash
+# Check if main system CHARMM-GUI build has completed (new directory would appear)
+ssh midway3 "ls -d /scratch/midway3/junseo/26summer-research/charmm-gui-*/  2>/dev/null"
+```
+
+Summarize: which jobs are running/pending, how far the control system has progressed, and whether the main system (full dome + membrane) has finished building in CHARMM-GUI.
+
+### What does NOT need per-session setup
+
+- **SSH key** — already installed on Midway3; no password after the ControlMaster socket is open
+- **pi-haddadian group** — already a member; `/project2/haddadian/rajiv/analysis` is accessible
+- **NAMD modules** — loaded inside SLURM job scripts (`module load namd/2.14`); no manual loading needed
+- **Git** — configured locally; Midway3 files are never committed anyway
+- **Python** — no analysis environment set up yet; will be needed when analysis work begins (future)
+- **VSCode Remote SSH** — optional, for file browsing; also reuses the ControlMaster socket once it's open
+
+---
+
 ## Project Overview
+
 Summer 2026 research investigating the opening mechanism of the dome structure in the FtsH•HflK/C complex (PDB: 9cz2) in *E. coli*.
 
 **PI**: Dr. Haddadian  
 **Predecessor**: Rajiv (Kenneth Yang) — built the complete structure and ran early test systems prior to this summer  
 **Start date**: June 8, 2026  
 **Cluster**: Midway3 — `/scratch/midway3/junseo/26summer-research/`  
-**Note**: Aug 8 – Sep 8, 2026 user is in Korea (remote work only)
+**Note**: Aug 8 – Sep 8, 2026 user is in Korea (remote work only, same SSH setup applies)
 
 ## Research Question
 What causes the opening of the dome — membrane composition or protease? What is the effect of the dome on the opening?
@@ -122,7 +183,7 @@ Benchmarks from April 2026 are for the **no-dome test system** (retired):
 |--------|-------|
 | 4 CPU nodes | 2.42 ns/day (~0.0687 s/step) |
 
-Scaling is ~linear; speedup and wait time roughly cancel for small jobs.
+Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect slower speeds for the full 9cz2 system (much larger).
 
 **Optimal node choice**:
 - ≤2 ns → 2–4 nodes
@@ -131,9 +192,12 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs.
 
 ## Current Systems (as of June 9, 2026 — Day 2)
 
+**Always verify these against the live cluster at session start (Step 3 above).**
+
 ### Main System — 9cz2 + membrane
 - **Input**: `9cz2_tm_centered_for_charmmgui.pdb`
 - **Status**: In CHARMM-GUI Membrane Bilayer Builder — expected to finish Day 3 (June 10)
+- **Once done**: A new `charmm-gui-XXXXXXXXXX/` directory will appear in `26summer-research/`
 - **Pipeline**: CHARMM-GUI output → conventional MD equilibration → GaMD
 
 ### Control System — Membrane-only baseline
@@ -219,4 +283,4 @@ Key script: lipid analysis (select/color lipids around the protein).
 - Connect to Midway3 via VSCode Remote SSH for live file access
   - Project path: `/scratch/midway3/junseo/26summer-research/`
   - Rajiv's scripts: `/project2/haddadian/rajiv/analysis`
-- SSH config uses ControlMaster for DUO-bypass multiplexing (`~/.ssh/config`)
+- SSH config: `~/.ssh/config` — ControlMaster auto, ControlPersist 1h, ServerAliveInterval 60
