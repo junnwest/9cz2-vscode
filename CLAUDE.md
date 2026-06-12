@@ -2,6 +2,12 @@
 
 ---
 
+> **MANDATORY FOR CLAUDE — FIRST ACTION EVERY SESSION, NO EXCEPTIONS:**
+> Before responding to ANY user request, complete the SESSION SETUP steps below.
+> Do NOT answer questions, run commands, or help with any task until Step 2 (connection verified) is done.
+
+---
+
 ## SESSION SETUP — Do This First Every Session
 
 **This section is for Claude to act on immediately when a new session starts.**
@@ -30,7 +36,7 @@ If it prints `OK` immediately (no DUO prompt), the connection is ready. If it fa
 
 ### Step 3 — Run the startup status check
 
-After the connection is confirmed, run these two commands and report the results:
+After the connection is confirmed, run these commands and report the results:
 
 ```bash
 # Active and pending jobs
@@ -43,11 +49,11 @@ ssh midway3 "ls /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/
 ```
 
 ```bash
-# Check if main system CHARMM-GUI build has completed (new directory would appear)
-ssh midway3 "ls -d /scratch/midway3/junseo/26summer-research/charmm-gui-*/  2>/dev/null"
+# Progress of the AF2 dome-24 run (check for completed model output files)
+ssh midway3 "ls /scratch/midway3/junseo/26summer-research/alphafold/9cz2/af2_dome24_output/dome_24chain_input/*.pdb 2>/dev/null | sort | tail -5"
 ```
 
-Summarize: which jobs are running/pending, how far the control system has progressed, and whether the main system (full dome + membrane) has finished building in CHARMM-GUI.
+Summarize: which jobs are running/pending, how far the control system has progressed, and how many AF2 dome-24 models have completed.
 
 ### What does NOT need per-session setup
 
@@ -120,12 +126,25 @@ All AlphaFold scripts at `/scratch/midway3/junseo/26summer-research/alphafold/9c
 - **13-chain opening region** (`job1_msa.sh` + `job2_infer.sh`): AlphaFold2.3.2 multimer, 5 CPU nodes (MSA), then GPU inference
   - Chains: 3 near opening (X=HflK, V=HflC, W=HflC) + 4 flanking (U=HflK, A=HflK, T=HflC, B=HflC) + 12 FtsH = 19 chains
   - `max_template_date=2024-01-01` to exclude 9cz2 from templates (forces de novo prediction of missing regions)
-  - Output at `af2_opening_output_13chain/`
+  - MSA stage completed (features.pkl generated); inference OOMed on A100 (~986 GB estimated)
+  - Output at `af2_opening_output_13chain/` — MSA dirs A/ (HflK) and B/ (HflC) reused for dome-24 run
+
+### AlphaFold Run — Dome-24 (current, June 10, 2026)
+- **Script**: `job_dome24_bigmem.sh` — SLURM job 50698644
+- **Partition**: bigmem (1 node, 48 CPUs, 768 GB RAM, no GPU), 36h wall time
+- **Input**: `dome_24chain_input.fasta` — 24 chains alternating HflK/HflC (A–X), full sequences (419 aa HflK, 334 aa HflC)
+- **MSA**: precomputed from 13-chain run (`--use_precomputed_msas=True`); only 2 unique sequences so A/ and B/ dirs cover all 24 chains
+- **Template**: `--max_template_date=2026-06-10` — includes 9cz2 as structural template; known regions are templated, gap regions predicted
+- **Goal**: Fill in all three missing regions with full dome context: HflK M3 (356–419), HflC 161–190, lower halves of chains X/V/W
+- **Output**: 5 predicted structures (5 model weights × 1 prediction each) at `af2_dome24_output/`
+- **Inference**: CPU-only (JAX_PLATFORM_NAME=cpu, XLA 48-core parallel); expected 1–2 models in 36h
+- **Post-run plan**: Use best-ranked model output directly as input to CHARMM-GUI for dome-only membrane system; discard HflK M1/M2 (1–78) predictions as TM region is unreliable without membrane context
 
 ### Output of structure preparation
 - `9cz2minimized_08jun_01.pdb` — Rajiv's complete structure (no water); at root of `26summer-research/`
-- `9cz2_tm_centered_for_charmmgui.pdb` — z-translated by 56.4 Å (corrected membrane position)
-  - Further translated z by 30 in CHARMM-GUI step 2
+- `9cz2_tm_centered_for_charmmgui.pdb` — z-translated by 56.4 Å (corrected membrane position); used for original (broken) CHARMM-GUI session 8095657229
+- `9cz2minimized_08jun_01_ftsh_fixed.pdb` — **corrected CHARMM-GUI input** (local copy: `9CZ2/`); FtsH TM chain IDs A–J renamed to digits 1–9/0 and segment IDs AP2–JP2 → 1P2–0P2 to resolve chain ID collision; all 36 segments (PROA–PRAJ) now imported correctly; z-translation +56.4 + 30 applied in CHARMM-GUI step 2
+- `9cz2_dome_original.pdb` — dome-only (24 HflK/HflC chains, no FtsH), extracted from vanilla 9CZ2.cif, zero-occupancy atoms filtered out; chains A–X (A=HflK, B=HflC alternating); HflC chains start at res 18 (post-TM), HflK chains start at res 79; used for visual inspection and as AF2 template reference
 
 ### Rajiv's Pre-production Minimization (`full_dome/`)
 Before building the membrane system, Rajiv ran a NAMD minimization to fix steric clashes at the chain V / chain A interface (caused by the chain V rotation during structure building):
@@ -181,7 +200,9 @@ Benchmarks from April 2026 are for the **no-dome test system** (retired):
 **Control membrane system** (632,689 atoms, no protein):
 | Config | Speed |
 |--------|-------|
-| 4 CPU nodes | 2.42 ns/day (~0.0687 s/step) |
+| 4 CPU nodes | ~4.0 ns/day (~0.043 s/step) |
+
+*Note: earlier figure was 2.42 ns/day — updated from step7_12 benchmarks (job 50623759, June 10, 2026). Variation likely due to queue/node-load conditions.*
 
 Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect slower speeds for the full 9cz2 system (much larger).
 
@@ -190,22 +211,31 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 9, 2026 — Day 2)
+## Current Systems (as of June 11, 2026 — Day 4)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
-### Main System — 9cz2 + membrane
-- **Input**: `9cz2_tm_centered_for_charmmgui.pdb`
-- **Status**: In CHARMM-GUI Membrane Bilayer Builder — expected to finish Day 3 (June 10)
-- **Once done**: A new `charmm-gui-XXXXXXXXXX/` directory will appear in `26summer-research/`
-- **Pipeline**: CHARMM-GUI output → conventional MD equilibration → GaMD
+### Dome-Only MD System — PRIMARY (planned)
+- **Input**: Best-ranked AF2 dome-24 output model (job 50698644, pending)
+- **Chains**: 24 HflK/HflC, no FtsH; HflK M1/M2 (1–78) trimmed before CHARMM-GUI
+- **Status**: Waiting for AF2 run to complete
+- **Pipeline**: AF2 output → trim TM region → CHARMM-GUI membrane build → equilibration → production
+- **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost and because it does not drive dome asymmetry
+
+### Main System — 9cz2 full dome + membrane (on hold)
+- **Path** (planned): `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`
+- **Input**: `9CZ2/9cz2minimized_08jun_01_ftsh_fixed.pdb` (z-translated +56.4 + 30 in CHARMM-GUI step 2)
+- **CHARMM-GUI session**: 8119908655 — all 36 chains selected (PROA–PRAJ); submitted June 11, 2026
+  - Previous session 8095657229 was broken: FtsH chains AP2–JP2 shared chain IDs A–J with dome P1 chains; CHARMM-GUI's 26-segment cap silently dropped the 10 FtsH TM chains; fixed by renaming FtsH chain IDs to digits
+- **Status**: On hold pending AF2 dome-24 result; CHARMM-GUI build in progress
+- **Pipeline**: CHARMM-GUI NAMD output → equilibration (step6.1–6.6) → production → GaMD
 
 ### Control System — Membrane-only baseline
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/`
 - **PSF**: `step5_input.psf` — 632,689 atoms, lipids only (TLCL1, DPPE, POPG, DOPG, LOACL1 + water/ions)
 - **CHARMM-GUI session**: 7628525516, built April 16, 2026
-- **Status**: step7_1 through step7_11 complete (11 ns production); step7_12 PENDING (4 nodes, 36h, SLURM job 50623759)
-- **Performance**: 2.42 ns/day (4 caslake nodes, ~9.9h per ns)
+- **Status**: 12 ns complete; step7_13–20 job submitted (SLURM 50676351, 5 nodes, 36h); target 20 ns total
+- **Performance**: ~4.0 ns/day (4–5 caslake nodes)
 - **Purpose**: Baseline to isolate membrane effects from protein effects
 
 ## Midway3 Directory Structure
@@ -219,13 +249,18 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 ├── step5_assembly.*, step5_input.*   # Root-level CHARMM-GUI files (reference)
 ├── toppar.str
 │
-├── alphafold/9cz2/                   # AlphaFold predictions (Rajiv)
-│   ├── job1_msa.sh                   # 13-chain MSA (5 CPU nodes, 24h)
-│   ├── job2_infer.sh                 # GPU inference
-│   ├── job3_hflc_mono.sh             # HflC monomer (A100 GPU, 4h)
+├── alphafold/9cz2/                   # AlphaFold predictions
+│   ├── job1_msa.sh                   # 13-chain MSA (5 CPU nodes, 24h) [Rajiv]
+│   ├── job2_infer.sh                 # GPU inference [Rajiv, OOMed]
+│   ├── job3_hflc_mono.sh             # HflC monomer (A100 GPU, 4h) [Rajiv]
+│   ├── job_dome24_bigmem.sh          # 24-chain dome run (bigmem, job 50698644) ← ACTIVE
 │   ├── af2_hflc_mono_output/         # Monomer prediction output
-│   ├── af2_opening_output_13chain/   # 13-chain multimer output
-│   └── *.fasta                       # Input sequences
+│   ├── af2_opening_output_13chain/   # 13-chain MSA output (reused for dome-24)
+│   ├── af2_dome24_output/            # Dome-24 output (in progress)
+│   ├── dome_24chain_input.fasta      # 24-chain HflK/HflC input
+│   └── *.fasta                       # Other input sequences
+│
+├── 9cz2_dome_original.pdb            # Dome-only from vanilla 9CZ2.cif (occ>0, no FtsH) ← AF2 visual ref
 │
 ├── charmm-gui-7628525516/            # CONTROL SYSTEM — membrane-only CHARMM-GUI build
 │   ├── step3-5_assembly.*            # Assembly steps
@@ -233,9 +268,14 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 │   └── namd/                         # ← ACTIVE SIMULATION DIRECTORY
 │       ├── step5_input.psf           # 632,689 atoms
 │       ├── step6.1-6.6_equilibration.* # Equilibration (complete)
-│       ├── step7_1 through step7_11.*  # 11 ns production (complete)
-│       ├── job-submit-step7-12-restart-cpu.sbatch  # Pending job
-│       └── run_step7_12_restart_cpu.sh
+│       ├── step7_1 through step7_12.*  # 12 ns production (complete)
+│       ├── job-submit-step7-13plus-cpu.sbatch  # Active job (50676351)
+│       └── run_step7_13plus_cpu.sh   # Loops steps 13–20
+│
+├── charmm-gui-9cz2fulldome-8119908655/  # MAIN SYSTEM — 9cz2 full dome + membrane (on hold, building)
+│   └── [to be populated once CHARMM-GUI session 8119908655 completes]
+│
+│   # NOTE: charmm-gui-9cz2fulldome-8095657229/ was superseded (broken PSF, FtsH chains dropped)
 │
 ├── charmm-gui-monomer-75-7828079160/ # HflC monomer CHARMM-GUI build (POPC membrane)
 │

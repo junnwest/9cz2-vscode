@@ -13,24 +13,28 @@ This directory tracks metadata and notes about each system — not the files the
 - **Atoms**: 632,689 (lipids + water + ions, no protein)
 - **CHARMM-GUI session**: 7628525516 (built April 16, 2026)
 - **NAMD**: version 2.14 (CPU MPI)
-- **Status**: step7_1–step7_11 complete (11 ns production); step7_12 PENDING (SLURM job 50623759)
-- **Performance**: 2.42 ns/day (4 caslake nodes, ~9.9h per 1 ns iteration)
+- **Status**: step7_1–step7_12 complete (12 ns production); step7_13–20 running (SLURM 50676351, 5 nodes, 36h); target 20 ns total
+- **Performance**: ~4.0 ns/day (4–5 caslake nodes, ~0.043 s/step); earlier 2.42 ns/day figure was from a slower run
 - **Equilibration**: step6.1–6.6 (CHARMM-GUI standard protocol, all complete)
-- **Production**: 1 ns/iteration (500,000 steps × 2 fs), iterated via `run_step7_12_restart_cpu.sh`
+- **Production**: 1 ns/iteration (500,000 steps × 2 fs), iterated via `run_step7_13plus_cpu.sh`
 - **Key files**:
   - `step5_input.psf` — topology (632,689 atoms)
-  - `step7_11.coor/.vel/.xsc` — last completed state
-  - `job-submit-step7-12-restart-cpu.sbatch` — current restart job
+  - `step7_12.coor/.vel/.xsc` — last completed state
+  - `job-submit-step7-13plus-cpu.sbatch` — active job (SLURM 50676351)
 
 ---
 
 ## main — 9cz2 + membrane
 
-- **Input structure**: `9cz2_tm_centered_for_charmmgui.pdb`
+- **Path** (planned): `charmm-gui-9cz2fulldome-8119908655/namd/`
+- **Input structure**: `9CZ2/9cz2minimized_08jun_01_ftsh_fixed.pdb`
   - Derived from `9cz2minimized_08jun_01.pdb` (Rajiv's complete structure)
-  - Z-translated 56.4 Å to fix membrane position; additional +30 in CHARMM-GUI step 2
-- **Status**: In CHARMM-GUI Membrane Bilayer Builder (as of 2026-06-09); expected to finish 2026-06-10
-- **Once done**: New CHARMM-GUI session directory will appear with step5_input.psf/.pdb/.crd
+  - FtsH TM chain IDs renamed (A–J → 1–9/0, segment IDs AP2–JP2 → 1P2–0P2) to fix CHARMM-GUI 26-segment cap
+  - Z-translated +56.4 + 30 in CHARMM-GUI step 2
+- **CHARMM-GUI session**: 8119908655 — all 36 chains selected (PROA–PRAJ); submitted June 11, 2026
+  - Previous session 8095657229 was broken: 10 FtsH TM chains silently dropped due to chain ID collision
+- **Status**: Building in CHARMM-GUI (as of 2026-06-11); on hold pending AF2 dome-24 result
+- **Once done**: Download as NAMD format; scp to `charmm-gui-9cz2fulldome-8119908655/` on Midway3
 - **Next**: Conventional MD equilibration (step6.1–6.6) → production step7 → GaMD
 
 ---
