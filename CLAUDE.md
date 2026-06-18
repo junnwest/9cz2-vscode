@@ -206,15 +206,21 @@ All AlphaFold scripts at `/scratch/midway3/junseo/26summer-research/alphafold/9c
   - MSA stage completed (features.pkl generated); inference OOMed on A100 (~986 GB estimated)
   - Output at `af2_opening_output_13chain/` — MSA dirs A/ (HflK) and B/ (HflC) reused for dome-24 run
 
-### AlphaFold Run — Dome-24 (current, June 10, 2026)
-- **Script**: `job_dome24_bigmem.sh` — SLURM job 50698644
-- **Partition**: bigmem (1 node, 48 CPUs, 768 GB RAM, no GPU), 36h wall time
+### AlphaFold Run — HflK Monomer (completed June 16, 2026)
+- **Script**: `af2_hflk_mono` — SLURM job 50799910
+- **Partition**: GPU (A100), ~1h wall time
+- **Input**: Full HflK sequence (419 aa), monomer_ptm preset
+- **Output**: `af2_hflk_mono_output/hflk_monomer/` — 5 ranked models (`ranked_0.pdb` … `ranked_4.pdb`)
+- **Notes**: pLDDT for M3 region (356–419) is 54–62 (low confidence, consistent with flexibility); includes hydrogens; M1/M2 (1–78) present but unreliable
+
+### AlphaFold Run — Dome-24 (active, June 18, 2026)
+- **Script**: `job_dome24_bigmem.sh` — original job 50698644 was restarted as job **50894863**
+- **Partition**: bigmem (1 node, 48 CPUs, 755 GB RAM, no GPU), 4-day wall time
 - **Input**: `dome_24chain_input.fasta` — 24 chains alternating HflK/HflC (A–X), full sequences (419 aa HflK, 334 aa HflC)
 - **MSA**: precomputed from 13-chain run (`--use_precomputed_msas=True`); only 2 unique sequences so A/ and B/ dirs cover all 24 chains
 - **Template**: `--max_template_date=2026-06-10` — includes 9cz2 as structural template; known regions are templated, gap regions predicted
 - **Goal**: Fill in all three missing regions with full dome context: HflK M3 (356–419), HflC 161–190, lower halves of chains X/V/W
-- **Output**: 5 predicted structures (5 model weights × 1 prediction each) at `af2_dome24_output/`
-- **Inference**: CPU-only (JAX_PLATFORM_NAME=cpu, XLA 48-core parallel); expected 1–2 models in 36h
+- **Status**: Running model_1_multimer_v3; 589 GB RAM in use at 1h30m mark; no PDB output yet as of June 18
 - **Post-run plan**: Use best-ranked model output directly as input to CHARMM-GUI for dome-only membrane system; discard HflK M1/M2 (1–78) predictions as TM region is unreliable without membrane context
 
 ### Output of structure preparation
@@ -222,6 +228,28 @@ All AlphaFold scripts at `/scratch/midway3/junseo/26summer-research/alphafold/9c
 - `9cz2_tm_centered_for_charmmgui.pdb` — z-translated by 56.4 Å (corrected membrane position); used for original (broken) CHARMM-GUI session 8095657229
 - `9cz2minimized_08jun_01_ftsh_fixed.pdb` — **corrected CHARMM-GUI input** (local copy: `9CZ2/`); FtsH TM chain IDs A–J renamed to digits 1–9/0 and segment IDs AP2–JP2 → 1P2–0P2 to resolve chain ID collision; all 36 segments (PROA–PRAJ) now imported correctly; z-translation +56.4 + 30 applied in CHARMM-GUI step 2
 - `9cz2_dome_original.pdb` — dome-only (24 HflK/HflC chains, no FtsH), extracted from vanilla 9CZ2.cif, zero-occupancy atoms filtered out; chains A–X (A=HflK, B=HflC alternating); HflC chains start at res 18 (post-TM), HflK chains start at res 79; used for visual inspection and as AF2 template reference
+
+### Chain ID / Segname mapping in ftsh_fixed.pdb
+- **HflK chains**: A, C, E, G, I, K, M, O, Q, S, U, X → segnames AP1, CP1, EP1, GP1, IP1, KP1, MP1, OP1, QP1, SP1, UP1, XP1
+- **HflC chains**: B, D, F, H, J, L, N, P, R, T, V, W → segnames BP1, DP1, FP1, HP1, JP1, LP1, NP1, PP1, RP1, TP1, VP1, WP1
+- **FtsH chains**: Y, Z (soluble, segnames YP1, ZP1) + 0–9 (TM, segnames 0P2–9P2)
+- Always use segname for selection — chain IDs are less reliable
+
+### HflK M3 Rotation (June 18, 2026)
+**Problem**: AF2 HflK monomer (ranked_0.pdb, trimmed to res 79–419) has M3 (356–419) predicted without dome context, causing clashes when superimposed onto the dome.
+
+**Approach**: Rigid-body 2D rotation search of M3 around the 355/356 hinge:
+- Spin axis: chain direction (centroid of CA 348–355 → centroid of CA 356–363)
+- Tilt axis: perpendicular to spin axis, projected against global Z
+- Pivot: Cα of residue 355
+- Grid: spin 0–355° (5° step) × tilt ±60° (5° step) = 1800 combinations
+- Clash metric: heavy atoms within 2.0 Å of non-HflK atoms after Kabsch superimposition onto all 12 chains
+
+**Result**: spin 80°, tilt +60° → **1 total clash across all 12 chains** (vs. 338 at original position)
+- Output: `hflk_af2_m3rotated.pdb` (res 79–419, M3 repositioned, in original AF2 coordinate frame)
+- Scripts: `find_m3_rotation.py` (rotation search), `replace_hflk.py` (replace 12 HflK chains in dome)
+
+**Next step**: Visual check in Chimera (superimpose onto dome), then run `replace_hflk.py` to build the full dome structure, then NAMD minimization → CHARMM-GUI → equilibration → NPT.
 
 ### Rajiv's Pre-production Minimization (`full_dome/`)
 Before building the membrane system, Rajiv ran a NAMD minimization to fix steric clashes at the chain V / chain A interface (caused by the chain V rotation during structure building):
@@ -288,30 +316,31 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 11, 2026 — Day 4)
+## Current Systems (as of June 18, 2026 — Day 11)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
 ### Dome-Only MD System — PRIMARY (planned)
-- **Input**: Best-ranked AF2 dome-24 output model (job 50698644, pending)
+- **Input**: Best-ranked AF2 dome-24 output model (job 50894863, running) — OR use HflK monomer + M3 rotation result (see below)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK M1/M2 (1–78) trimmed before CHARMM-GUI
-- **Status**: Waiting for AF2 run to complete
+- **Status**: AF2 dome-24 still computing; M3 rotation approach ready as fallback
 - **Pipeline**: AF2 output → trim TM region → CHARMM-GUI membrane build → equilibration → production
 - **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost and because it does not drive dome asymmetry
+- **M3 rotation fallback**: `hflk_af2_m3rotated.pdb` (res 79–419) was computed June 18 with 1 clash across 12 chains; if dome-24 fails, assemble full dome with `replace_hflk.py` then minimise before CHARMM-GUI
 
 ### Main System — 9cz2 full dome + membrane (on hold)
 - **Path** (planned): `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`
 - **Input**: `9CZ2/9cz2minimized_08jun_01_ftsh_fixed.pdb` (z-translated +56.4 + 30 in CHARMM-GUI step 2)
 - **CHARMM-GUI session**: 8119908655 — all 36 chains selected (PROA–PRAJ); submitted June 11, 2026
   - Previous session 8095657229 was broken: FtsH chains AP2–JP2 shared chain IDs A–J with dome P1 chains; CHARMM-GUI's 26-segment cap silently dropped the 10 FtsH TM chains; fixed by renaming FtsH chain IDs to digits
-- **Status**: On hold pending AF2 dome-24 result; CHARMM-GUI build in progress
+- **Status**: On hold pending AF2 dome-24 result; equilibration started on Beagle3 (step6.1 DCD present)
 - **Pipeline**: CHARMM-GUI NAMD output → equilibration (step6.1–6.6) → production → GaMD
 
 ### Control System — Membrane-only baseline
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/`
 - **PSF**: `step5_input.psf` — 632,689 atoms, lipids only (TLCL1, DPPE, POPG, DOPG, LOACL1 + water/ions)
 - **CHARMM-GUI session**: 7628525516, built April 16, 2026
-- **Status**: 12 ns complete; step7_13–20 job submitted (SLURM 50676351, 5 nodes, 36h); target 20 ns total
+- **Status**: **21 ns complete on Midway3; 22+ ns on Beagle3** (step7_22 running, ~156h remaining as of June 18)
 - **Performance**: ~4.0 ns/day (4–5 caslake nodes)
 - **Purpose**: Baseline to isolate membrane effects from protein effects
 
@@ -330,14 +359,18 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 │   ├── job1_msa.sh                   # 13-chain MSA (5 CPU nodes, 24h) [Rajiv]
 │   ├── job2_infer.sh                 # GPU inference [Rajiv, OOMed]
 │   ├── job3_hflc_mono.sh             # HflC monomer (A100 GPU, 4h) [Rajiv]
-│   ├── job_dome24_bigmem.sh          # 24-chain dome run (bigmem, job 50698644) ← ACTIVE
-│   ├── af2_hflc_mono_output/         # Monomer prediction output
+│   ├── job_dome24_bigmem.sh          # 24-chain dome run (bigmem, job 50894863) ← ACTIVE
+│   ├── af2_hflc_mono_output/         # HflC monomer prediction output [Rajiv]
+│   ├── af2_hflk_mono_output/         # HflK monomer output (job 50799910, done Jun 16) ← ranked_0.pdb = best
 │   ├── af2_opening_output_13chain/   # 13-chain MSA output (reused for dome-24)
-│   ├── af2_dome24_output/            # Dome-24 output (in progress)
+│   ├── af2_dome24_output/            # Dome-24 output (model_1 in progress)
 │   ├── dome_24chain_input.fasta      # 24-chain HflK/HflC input
 │   └── *.fasta                       # Other input sequences
 │
 ├── 9cz2_dome_original.pdb            # Dome-only from vanilla 9CZ2.cif (occ>0, no FtsH) ← AF2 visual ref
+│
+├── hflk_af2_ranked0_notm.pdb         # AF2 HflK monomer res 79–419 (M1/M2 trimmed)
+├── hflk_af2_m3rotated.pdb            # AF2 HflK with M3 rotated (spin 80°, tilt +60°, 1 clash across 12 chains)
 │
 ├── charmm-gui-7628525516/            # CONTROL SYSTEM — membrane-only CHARMM-GUI build
 │   ├── step3-5_assembly.*            # Assembly steps
@@ -345,9 +378,8 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 │   └── namd/                         # ← ACTIVE SIMULATION DIRECTORY
 │       ├── step5_input.psf           # 632,689 atoms
 │       ├── step6.1-6.6_equilibration.* # Equilibration (complete)
-│       ├── step7_1 through step7_12.*  # 12 ns production (complete)
-│       ├── job-submit-step7-13plus-cpu.sbatch  # Active job (50676351)
-│       └── run_step7_13plus_cpu.sh   # Loops steps 13–20
+│       ├── step7_1 through step7_21.*  # 21 ns production (complete on Midway3; 22+ on Beagle3)
+│       └── job-submit-step7-13plus-cpu.sbatch  # Job script
 │
 ├── charmm-gui-9cz2fulldome-8119908655/  # MAIN SYSTEM — 9cz2 full dome + membrane (on hold, building)
 │   └── [to be populated once CHARMM-GUI session 8119908655 completes]
