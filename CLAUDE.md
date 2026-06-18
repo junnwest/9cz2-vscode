@@ -12,6 +12,60 @@
 
 **This section is for Claude to act on immediately when a new session starts.**
 
+### Step 0 — Identify the machine and set up accordingly
+
+Run `hostname` to determine which machine this is, then follow the matching path below.
+
+```bash
+hostname
+```
+
+---
+
+#### If hostname is `BSCD401-5` — Lab machine (shared, encrypted vault required)
+
+All project files and the deploy key live inside an AES-256 encrypted sparse bundle.
+Check if the vault is already mounted:
+
+```bash
+ls /Volumes/kenneth 2>/dev/null && echo "MOUNTED" || echo "NOT MOUNTED"
+```
+
+If not mounted, **tell the user:**
+
+> Please mount the vault:
+> ```
+> hdiutil attach ~/kenneth.sparsebundle
+> ```
+> Enter your password when prompted — it mounts at `/Volumes/kenneth`. Let me know when done.
+
+Key paths on this machine:
+| Resource | Path |
+|----------|------|
+| Repo | `/Volumes/kenneth/9cz2-vscode/` |
+| Deploy key | `/Volumes/kenneth/.ssh/9cz2_deploy` |
+| SSH config | `~/.ssh/config` |
+| git binary | `/Library/Developer/CommandLineTools/usr/bin/git` |
+| VSCode folder | `/Volumes/kenneth/9cz2-vscode` |
+| Lock vault | `hdiutil detach /Volumes/kenneth` |
+
+---
+
+#### If hostname is `[YOUR-PERSONAL-HOSTNAME]` — Personal machine
+
+> **TODO**: Update this section after setting up the personal device.
+> Record: repo path, deploy key path, any machine-specific notes.
+
+Key paths on this machine:
+| Resource | Path |
+|----------|------|
+| Repo | `~/9cz2-vscode/` *(update if different)* |
+| Deploy key | `~/.ssh/9cz2_deploy` *(update if different)* |
+| SSH config | `~/.ssh/config` |
+| VSCode folder | `~/9cz2-vscode` *(update if different)* |
+
+---
+
 ### Step 1 — Open the SSH ControlMaster socket (user action required)
 
 The Bash tool reaches Midway3 by tunneling through an SSH ControlMaster socket on the local machine. This socket expires after 1 hour of inactivity. Without it, every `ssh midway3` command will fail with an authentication error.
@@ -44,8 +98,10 @@ ssh midway3 "squeue -u junseo --format='%.10i %.12j %.6D %.8T %.10M %.10l %Z'"
 ```
 
 ```bash
-# Progress of the control system
-ssh midway3 "ls /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_*.coor 2>/dev/null | sort | tail -1"
+# Progress of the control system (Midway3) and Beagle3
+ssh midway3 "ls /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_*.coor 2>/dev/null | sort -V | tail -1"
+ssh midway3 "ls /project2/haddadian/junseo/beagle3-jobs/control_prod/step7_*.coor 2>/dev/null | sort -V | tail -1"
+ssh midway3 "grep 'TIMING' /project2/haddadian/junseo/beagle3-jobs/control_prod/step7_22.out 2>/dev/null | tail -1"
 ```
 
 ```bash
@@ -53,7 +109,15 @@ ssh midway3 "ls /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/
 ssh midway3 "ls /scratch/midway3/junseo/26summer-research/alphafold/9cz2/af2_dome24_output/dome_24chain_input/*.pdb 2>/dev/null | sort | tail -5"
 ```
 
-Summarize: which jobs are running/pending, how far the control system has progressed, and how many AF2 dome-24 models have completed.
+Summarize: which jobs are running/pending, how far the control system has progressed on both Midway3 and Beagle3, and how many AF2 dome-24 models have completed.
+
+Also check Beagle3 jobs (files synced to Midway3 project2):
+```bash
+# Main 9cz2 equilibration on Beagle3 — check which step6.x completed
+ssh midway3 "ls /project2/haddadian/junseo/beagle3-jobs/main_equil/namd/step6.*.dcd 2>/dev/null | sort -V"
+# AF2 dome-24 on Beagle3
+ssh midway3 "ls /project2/haddadian/junseo/beagle3-jobs/af2_dome24/output/dome_24chain_input/*.pdb 2>/dev/null | sort | tail -5"
+```
 
 ### What does NOT need per-session setup
 
@@ -63,6 +127,19 @@ Summarize: which jobs are running/pending, how far the control system has progre
 - **Git** — configured locally; Midway3 files are never committed anyway
 - **Python** — no analysis environment set up yet; will be needed when analysis work begins (future)
 - **VSCode Remote SSH** — optional, for file browsing; also reuses the ControlMaster socket once it's open
+
+## Local Machine Setup (BSCD401-5, lab Mac)
+
+This is a shared lab computer. Project files are stored in an encrypted vault.
+
+- **Vault**: `~/kenneth.sparsebundle` (AES-256, 5 GB sparse bundle)
+- **Mount**: `hdiutil attach ~/kenneth.sparsebundle` → `/Volumes/kenneth`
+- **Unmount**: `hdiutil detach /Volumes/kenneth`
+- **Resize if needed**: `hdiutil resize -size 10g ~/kenneth.sparsebundle`
+- **VSCode working folder**: `/Volumes/kenneth/9cz2-vscode`
+- **Deploy key**: `/Volumes/kenneth/.ssh/9cz2_deploy` (referenced in `~/.ssh/config`)
+- **SSH config**: `~/.ssh/config` (outside vault — contains no secrets, only hostnames/options)
+- **git binary**: `/Library/Developer/CommandLineTools/usr/bin/git` (system git blocked by Xcode license; CLT installed as workaround June 18, 2026)
 
 ---
 
