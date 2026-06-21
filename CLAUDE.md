@@ -51,18 +51,43 @@ Key paths on this machine:
 
 ---
 
-#### If hostname is `[YOUR-PERSONAL-HOSTNAME]` — Personal machine
+#### If hostname is `DESKTOP-P24OLOH` — Personal machine (Windows 11, set up June 21, 2026)
 
-> **TODO**: Update this section after setting up the personal device.
-> Record: repo path, deploy key path, any machine-specific notes.
+**CRITICAL — SSH must go through WSL on this machine, NOT Windows-native ssh.**
+
+Windows OpenSSH (both PowerShell's native build and Git-Bash/MSYS) **cannot maintain
+ControlMaster socket multiplexing** — every attempt fails with `getsockname failed: Not a
+socket` or `read from master failed: Connection reset by peer`. Since RCC/Midway3 **requires
+password+DUO on every fresh connection** (public-key auth is NOT accepted), the persistent
+socket is the *only* way to avoid re-DUOing every command — and the Bash tool (non-interactive)
+cannot answer DUO prompts. Therefore all Midway3 access is routed through **WSL2 Ubuntu**, which
+has real Linux OpenSSH (9.6p1) that supports ControlMaster sockets, exactly like the lab Mac.
 
 Key paths on this machine:
 | Resource | Path |
 |----------|------|
-| Repo | `~/9cz2-vscode/` *(update if different)* |
-| Deploy key | `~/.ssh/9cz2_deploy` *(update if different)* |
-| SSH config | `~/.ssh/config` |
-| VSCode folder | `~/9cz2-vscode` *(update if different)* |
+| Repo | `c:\Users\Kenneth\Desktop\UChicago\Research\9cz2-vscode` |
+| Claude Code Bash tool | Git-Bash / MSYS (`/usr/bin/ssh` here CANNOT multiplex — do not use for Midway3) |
+| WSL distro | `Ubuntu` (WSL2; logs in as **root**, `HOME=/root`) |
+| WSL SSH config | `/root/.ssh/config` (has `ControlMaster auto` / `ControlPath ~/.ssh/cm-%r@%h:%p` / `ControlPersist 1h`) |
+| Windows SSH config | `C:\Users\Kenneth\.ssh\config` (plain, NO ControlMaster — native ssh chokes on it) |
+| Midway3 socket | `/root/.ssh/cm-junseo@midway3.rcc.uchicago.edu:22` (inside WSL) |
+| Deploy key | Not needed for Midway3 (RCC ignores pubkeys); GitHub deploy key only relevant for pushing |
+
+**Session connection flow on this machine:**
+1. **User** opens a terminal, runs `wsl` to enter Ubuntu, then `ssh midway3`, completes
+   password+DUO once, and **leaves the WSL window open** (keeps the WSL instance + socket alive).
+2. **Claude** routes every Midway3 command through that socket:
+   ```bash
+   wsl.exe -d Ubuntu -- bash -lc 'ssh midway3 "<remote command>"'
+   ```
+   (Pipe through `| grep -v getpwuid` to drop the harmless WSL uid-mapping warning.)
+3. Verify with: `wsl.exe -d Ubuntu -- bash -lc 'ssh -o BatchMode=yes midway3 "echo OK"'` — if it
+   prints `OK` with no DUO, the socket is live. If it errors, ask the user to redo step 1.
+
+> **Note for Step 1 / Step 2 below:** on THIS machine, substitute the plain `ssh midway3` in
+> those steps with the `wsl.exe -d Ubuntu -- bash -lc 'ssh midway3 "..."'` form above. The
+> ControlMaster socket lives inside WSL, not on the Windows side.
 
 ---
 
