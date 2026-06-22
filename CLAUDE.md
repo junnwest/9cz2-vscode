@@ -238,14 +238,21 @@ All AlphaFold scripts at `/scratch/midway3/junseo/26summer-research/alphafold/9c
 - **Output**: `af2_hflk_mono_output/hflk_monomer/` — 5 ranked models (`ranked_0.pdb` … `ranked_4.pdb`)
 - **Notes**: pLDDT for M3 region (356–419) is 54–62 (low confidence, consistent with flexibility); includes hydrogens; M1/M2 (1–78) present but unreliable
 
-### AlphaFold Run — Dome-24 (active, June 18, 2026)
-- **Script**: `job_dome24_bigmem.sh` — original job 50698644 was restarted as job **50894863**
-- **Partition**: bigmem (1 node, 48 CPUs, 755 GB RAM, no GPU), 4-day wall time
-- **Input**: `dome_24chain_input.fasta` — 24 chains alternating HflK/HflC (A–X), full sequences (419 aa HflK, 334 aa HflC)
+### AlphaFold Run — Dome-24 (RUNNING on 1.5 TB node, job 50972223, since June 21, 2026)
+- **Active script**: `job_dome24_model1_1536g.sh` — **job 50972223**, RUNNING on `midway3-0318` since June 21 19:03 CDT
+- **Input**: `dome_24chain_input.fasta` — 24 chains alternating HflK/HflC (A–X), full sequences (419 aa HflK, 334 aa HflC); 9,036 residues total
 - **MSA**: precomputed from 13-chain run (`--use_precomputed_msas=True`); only 2 unique sequences so A/ and B/ dirs cover all 24 chains
 - **Template**: `--max_template_date=2026-06-10` — includes 9cz2 as structural template; known regions are templated, gap regions predicted
 - **Goal**: Fill in all three missing regions with full dome context: HflK M3 (356–419), HflC 161–190, lower halves of chains X/V/W
-- **Status**: Running model_1_multimer_v3; 589 GB RAM in use at 1h30m mark; no PDB output yet as of June 18
+- **Model**: model_1_multimer_v3 only (`run_af2_model1_only.py`); `models_to_relax=none`
+- **MEMORY — KEY LESSON**: RSS footprint is steady **~589 GB**, with peak exceeding 750 GB → **MUST run on the 1.5 TB node `midway3-0318`** (pin with `#SBATCH --nodelist=midway3-0318`). The 768 GB node (`midway3-0317`) OOM-kills it.
+- **Partition/QOS**: bigmem partition has only 2 nodes (0317=768 GB, 0318=1.5 TB). `bigmem` QOS `MaxWall = 36h` (hard cap; a 4-day request is rejected `QOSMaxWallDurationPerJobLimit`). `bigmem-pr+` QOS allows 4 days but pi-haddadian access unconfirmed.
+- **Failure history** (all produced NO model output):
+  - 50698644 — 750 GB → OUT_OF_MEMORY (Jun 12)
+  - 50737753 — 1.5 TB (0318) → ran model_1 ~29.5h, **manually cancelled** Jun 18 (not OOM, not finished)
+  - 50894863 — 750 GB (0317) → OUT_OF_MEMORY Jun 19, exit 137 (this script lacked `--nodelist` → wrong node)
+- **Walltime RISK (open)**: prior 1.5 TB run was >29.5h and unfinished; 36h cap leaves little margin, and **AF2 inference does NOT checkpoint** → a timeout = total loss. RCC emailed to either extend job 50972223 TimeLimit in place (`scontrol update job=... TimeLimit=...`, admin-only, preserves progress) or grant `bigmem-pr+`.
+- **Fallback (ready)**: `hflk_af2_m3rotated.pdb` + `replace_hflk.py` if dome-24 fails.
 - **Post-run plan**: Use best-ranked model output directly as input to CHARMM-GUI for dome-only membrane system; discard HflK M1/M2 (1–78) predictions as TM region is unreliable without membrane context
 
 ### Output of structure preparation
@@ -341,14 +348,14 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 18, 2026 — Day 11)
+## Current Systems (as of June 21–22, 2026 — Day 14)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
 ### Dome-Only MD System — PRIMARY (planned)
-- **Input**: Best-ranked AF2 dome-24 output model (job 50894863, running) — OR use HflK monomer + M3 rotation result (see below)
+- **Input**: Best-ranked AF2 dome-24 output model (**job 50972223, RUNNING on 1.5 TB node** — see AlphaFold Run — Dome-24 above) — OR use HflK monomer + M3 rotation result (see below)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK M1/M2 (1–78) trimmed before CHARMM-GUI
-- **Status**: AF2 dome-24 still computing; M3 rotation approach ready as fallback
+- **Status**: AF2 dome-24 computing (job 50972223 on midway3-0318); NO model output yet; M3 rotation approach ready as fallback. Walltime risk on 36h cap — see dome-24 section.
 - **Pipeline**: AF2 output → trim TM region → CHARMM-GUI membrane build → equilibration → production
 - **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost and because it does not drive dome asymmetry
 - **M3 rotation fallback**: `hflk_af2_m3rotated.pdb` (res 79–419) was computed June 18 with 1 clash across 12 chains; if dome-24 fails, assemble full dome with `replace_hflk.py` then minimise before CHARMM-GUI
@@ -365,7 +372,7 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/`
 - **PSF**: `step5_input.psf` — 632,689 atoms, lipids only (TLCL1, DPPE, POPG, DOPG, LOACL1 + water/ions)
 - **CHARMM-GUI session**: 7628525516, built April 16, 2026
-- **Status**: **21 ns complete on Midway3; 22+ ns on Beagle3** (step7_22 running, ~156h remaining as of June 18)
+- **Status**: **~22 ns** (`step7_22.restart.coor` on both Midway3 and Beagle3 as of June 21–22); **NO job currently running** — resubmit needed to continue
 - **Performance**: ~4.0 ns/day (4–5 caslake nodes)
 - **Purpose**: Baseline to isolate membrane effects from protein effects
 
@@ -384,11 +391,14 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 │   ├── job1_msa.sh                   # 13-chain MSA (5 CPU nodes, 24h) [Rajiv]
 │   ├── job2_infer.sh                 # GPU inference [Rajiv, OOMed]
 │   ├── job3_hflc_mono.sh             # HflC monomer (A100 GPU, 4h) [Rajiv]
-│   ├── job_dome24_bigmem.sh          # 24-chain dome run (bigmem, job 50894863) ← ACTIVE
+│   ├── job_dome24_model1_1536g.sh    # 24-chain dome, model_1 only, pinned to 1.5TB node ← ACTIVE (job 50972223)
+│   ├── job_dome24_model1.sh          # same but no nodelist → ran on 768GB node → OOM (job 50894863)
+│   ├── job_dome24_1536g.sh           # 1.5TB-pinned (job 50737753, cancelled at ~29.5h)
+│   ├── job_dome24_bigmem.sh          # all-5-models bigmem run (job 50698644, OOM)
 │   ├── af2_hflc_mono_output/         # HflC monomer prediction output [Rajiv]
 │   ├── af2_hflk_mono_output/         # HflK monomer output (job 50799910, done Jun 16) ← ranked_0.pdb = best
 │   ├── af2_opening_output_13chain/   # 13-chain MSA output (reused for dome-24)
-│   ├── af2_dome24_output/            # Dome-24 output (model_1 in progress)
+│   ├── af2_dome24_output/            # Dome-24 output (only msas/ + features.pkl so far; NO model yet)
 │   ├── dome_24chain_input.fasta      # 24-chain HflK/HflC input
 │   └── *.fasta                       # Other input sequences
 │

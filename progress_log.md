@@ -7,6 +7,41 @@
 
 ---
 
+## June 21–22, 2026 — Day 14
+
+**New personal device set up (Windows 11, `DESKTOP-P24OLOH`)**
+- Midway3 SSH must route through **WSL2 Ubuntu**, not Windows-native ssh
+  - Windows OpenSSH (PowerShell native + Git-Bash/MSYS) cannot maintain ControlMaster socket multiplexing (`getsockname failed: Not a socket` / `read from master failed: Connection reset by peer`)
+  - RCC requires password+DUO on every fresh connection (public-key auth NOT accepted) → the persistent socket is the only way to avoid re-DUOing every command, and the non-interactive Bash tool can't answer DUO
+  - WSL2 Ubuntu has real Linux OpenSSH (9.6p1) that supports ControlMaster, like the lab Mac
+  - Flow: user runs `wsl` → `ssh midway3` → DUO once (keep window open); Claude routes via `wsl.exe -d Ubuntu -- bash -lc 'ssh midway3 "..."'`. WSL config at `/root/.ssh/config`. Full details in CLAUDE.md.
+
+**AF2 dome-24 — root-caused all prior failures; resubmitted on correct node**
+- Discovered **no dome-24 model was ever produced** — `af2_dome24_output/dome_24chain_input/` has only `msas/` + `features.pkl` (June 10); no ranked/unrelaxed PDBs, no result pkls
+- Failure history (all attempts):
+  | Job | Mem / node | Result |
+  |-----|-----------|--------|
+  | 50698644 | 750 GB | OUT_OF_MEMORY (Jun 12) |
+  | 50737753 | 1.5 TB (node 0318) | ran model_1 ~29.5h, **manually CANCELLED** Jun 18 (not OOM, not finished) |
+  | 50894863 | 750 GB (node 0317) | **OUT_OF_MEMORY** Jun 19, exit 137 |
+- **Root cause of the OOM:** `job_dome24_model1.sh` had **no `--nodelist`**, so SLURM placed it on `midway3-0317` (768 GB). AF2 RSS for this system is steady **~589 GB**; peak exceeds 750 GB → cgroup OOM-kill. The 1.5 TB run (which pins `--nodelist=midway3-0318`) never OOM'd — it was cancelled, not killed.
+- **Fix:** created `job_dome24_model1_1536g.sh` = model_1 script + `#SBATCH --nodelist=midway3-0318` (the only 1.5 TB bigmem node) + log rename. Walltime kept at 36h — `bigmem` QOS `MaxWall = 1-12:00:00` is a hard cap (a 4-day request was rejected `QOSMaxWallDurationPerJobLimit`).
+- **Resubmitted: job 50972223** — RUNNING on midway3-0318 (1.5 TB), started Jun 21 19:03 CDT; RSS steady ~589 GB, CPU ~700%, model_1_multimer_v3 only, precomputed MSAs. Will not OOM.
+- **Walltime risk (open):** prior 1.5 TB run was >29.5h and unfinished; 36h cap leaves ~6.5h margin, and **AF2 inference does not checkpoint** → a timeout = total loss (no partial output). User is emailing RCC to either **extend the running job 50972223's TimeLimit in place** (`scontrol update job=... TimeLimit=...`, admin-only, preserves progress) or grant access to the **`bigmem-pr+` QOS** (`MaxWall = 4-00:00:00`). Email ideally answered within ~33h.
+
+**bigmem partition facts (verified)**
+- Only **2 nodes**: `midway3-0317` (768 GB), `midway3-0318` (1.5 TB)
+- `bigmem` QOS: `MaxWall = 36h`, `MaxTRESPU cpu=96`
+- `bigmem-pr+` QOS: `MaxWall = 4 days` (access for pi-haddadian unconfirmed)
+
+**System status at session start**
+- No jobs running/pending at session start (queue empty)
+- Control system: `step7_22.restart.coor` on both Midway3 and Beagle3 (~22 ns) — unchanged since Day 11; jobs not currently running
+- Beagle3 main_equil: only `step6.1_equilibration.dcd` present
+- HflK monomer AF2 output intact (`af2_hflk_mono_output/`, ranked_0–4)
+
+---
+
 ## June 12, 2026 — Day 5
 
 **RFdiffusion — module available, planning deferred**

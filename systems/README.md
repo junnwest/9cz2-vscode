@@ -13,7 +13,7 @@ This directory tracks metadata and notes about each system — not the files the
 - **Atoms**: 632,689 (lipids + water + ions, no protein)
 - **CHARMM-GUI session**: 7628525516 (built April 16, 2026)
 - **NAMD**: version 2.14 (CPU MPI)
-- **Status**: step7_1–step7_12 complete (12 ns production); step7_13–20 running (SLURM 50676351, 5 nodes, 36h); target 20 ns total
+- **Status**: ~22 ns complete (`step7_22.restart.coor` on both Midway3 and Beagle3, as of June 21–22); **no job currently running** (queue empty at last check) — resubmit needed to extend further
 - **Performance**: ~4.0 ns/day (4–5 caslake nodes, ~0.043 s/step); earlier 2.42 ns/day figure was from a slower run
 - **Equilibration**: step6.1–6.6 (CHARMM-GUI standard protocol, all complete)
 - **Production**: 1 ns/iteration (500,000 steps × 2 fs), iterated via `run_step7_13plus_cpu.sh`
@@ -36,6 +36,19 @@ This directory tracks metadata and notes about each system — not the files the
 - **Status**: Building in CHARMM-GUI (as of 2026-06-11); on hold pending AF2 dome-24 result
 - **Once done**: Download as NAMD format; scp to `charmm-gui-9cz2fulldome-8119908655/` on Midway3
 - **Next**: Conventional MD equilibration (step6.1–6.6) → production step7 → GaMD
+
+---
+
+## dome-only (PRIMARY, planned) — AF2 dome-24 input
+
+- **Goal**: Best-ranked AF2 24-chain dome model → trim HflK 1–78 → CHARMM-GUI membrane build → equilibration → production. Dome-only (no FtsH) is sufficient to study the opening mechanism.
+- **AF2 dome-24 (9,036 residues, 24 chains)**: full-context prediction on bigmem CPU
+  - Footprint: RSS steady **~589 GB** → requires the **1.5 TB** node (`midway3-0318`); the 768 GB node OOMs
+  - **Active job: 50972223** (`af2_dome24_m1_1536g`) — RUNNING on midway3-0318 since June 21 19:03, model_1_multimer_v3 only, precomputed MSAs, 36h walltime
+  - Prior failures: 50698644 (750 GB OOM), 50737753 (1.5 TB, manually cancelled at ~29.5h), 50894863 (750 GB OOM — missing `--nodelist`)
+  - Script: `job_dome24_model1_1536g.sh` (= model_1 script pinned to 1.5 TB node)
+  - **Risk**: 36h `bigmem` QOS cap may be too short; AF2 has no checkpoint (timeout = total loss). RCC asked to extend job TimeLimit in place or grant `bigmem-pr+` QOS (4-day).
+- **Fallback (ready)**: `hflk_af2_m3rotated.pdb` (HflK monomer + M3 rigid-body rotation, 1 clash across 12 chains) → assemble dome with `replace_hflk.py` if AF2 dome-24 fails
 
 ---
 
