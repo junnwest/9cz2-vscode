@@ -7,6 +7,143 @@
 
 ---
 
+## June 22, 2026 — Day 15
+
+**M3 tail grafting — AF3 monomer approach**
+- Downloaded AF3 HflK monomer prediction (`fold_hflk_full_model_0.cif`) from alphafoldserver.com — residues 79–419 (biological), includes M3 tail (356–419)
+- Grafted M3 (356–419) from AF3 onto all 12 HflK chains in Rajiv's dome (`9cz2minimized_08jun_01_ftsh_fixed.pdb`): superimposed AF3 anchor (79–355) onto each chain, extracted M3, appended with renumbered residue IDs
+- Output: `dome_with_m3_grafted.pdb` — junction gaps 3.7–19.4 Å (ideal peptide bond = 1.33 Å); clashes 1–130 per chain
+
+**M3 declashing — 2D rotation search**
+- Wrote `scripts/rotate_m3_declash.py`: closes C355–N356 junction gap to ideal peptide geometry, sweeps omega × phi dihedrals (2° steps, 180×180 = 32,400 combos per chain) with inward constraint (M3 COM must point toward dome centroid)
+- Key fix: resid 355 in Rajiv's dome uses CHARMM C-terminal naming (OT1/OT2 not O) — script updated to fall back to OT1
+- Result (`dome_m3_rotated.pdb`): all 12 M3 tails point inward; severe clashes (<1.5 Å) reduced to 0–13 per chain (Q and S: 0; best five chains ≤6)
+
+**NAMD minimization — dome + M3, water only**
+- Built minimization pipeline in `scripts/minimize_m3/`:
+  - `01_fix_and_split.py` — splits `dome_m3_rotated.pdb` into 36 per-segment PDB files
+  - `02_build_psf.tcl` — psfgen with `top_all36_prot.rtf`; 139,776 protein atoms
+  - `03_solvate.tcl` — VMD solvate (15 Å) + autoionize (0.15 M NaCl); 1,452,343 atoms total; box 284.516 × 272.457 × 197.517 Å
+  - `04_make_restraints.py` — B=0 for M3 (resid 356–419, HflK chains); B=500 for dome + water + ions
+  - `05_minimize.conf` — NAMD 2.14, 10,000 steps CG minimization, full CHARMM36m parameter set (matched to step6.1)
+  - `06_job_minimize.sbatch` — 4 caslake nodes, 4h
+- Repeated failures fixed: missing `exclude scaled1-4`, wrong toppar path (root `toppar/` vs NAMD-compatible `namd/toppar/`), missing `par_all36_na.prm` for ON3 atom type
+- Current job: **51015689** (PENDING as of session end)
+
+**Control system analysis**
+- Confirmed control system total: 21 ns (Midway3 step7_1–21) + ~10 ns (Beagle3 step7_22 via Kaylie, job cut by wall time) = **~31 ns**
+- Set up Python virtualenv `~/mda_env` on Midway3 with MDAnalysis 2.7.0 and membrane-curvature
+- Wrote and ran `scripts/analysis/control_thickness.py` and `scripts/analysis/control_curvature.py` on all 31 ns
+- Output (downloaded locally to `analysis/`): `control_thickness_31ns.{png,npy}`, `control_curvature_31ns.{png,npy}`
+- Analysis job: **51015382** (completed)
+
+**AF2 dome-24 (job 50972223)**
+- 26h+ elapsed; features.pkl complete; no PDB models yet (CPU inference still running); 4-day wall time, not at risk
+
+**Emails drafted**
+- NAMD mailing list: multi-node GPU feasibility for 1.7M atom system
+- Dr. Zand (UChicago): multi-node GPU parallelization question (referred by Dr. Haddadian)
+- Rajiv: M3 grafting progress + GaMD script request
+
+---
+
+## June 18, 2026 — Day 11
+
+**AF2 dome-24 — job 50737753 cancelled; RCC investigation**
+- Job 50737753 was cancelled at 11:33 CDT, cause unknown. It had completed all MSA/template processing and was mid-inference (`model_1_multimer_v3_pred_0`, 9036 residues, 3072 MSA rows) when killed — the most compute-intensive phase.
+- Met with RCC staff; they will investigate the cancellation and optimize the script.
+- Copied all AF2 files to `/project2/haddadian/junseo/af2_dome24_rcc/` (16 GB) for RCC to access:
+  - All job scripts (`job_dome24_bigmem.sh`, `job_dome24_model1.sh`, `run_af2_model1_only.py`, etc.)
+  - Error logs from cancelled jobs (50737753, 50698644)
+  - Precomputed MSAs (`af2_opening_output_13chain/`, 6.5 GB)
+  - Partial output (`af2_dome24_output/`, 1.6 GB)
+
+**New AF2 job 50894863 queued**
+- Script: `job_dome24_model1.sh` — runs only `model_1_multimer_v3` via custom Python wrapper `run_af2_model1_only.py`
+- Partition: bigmem, 1 node, 48 CPUs, 750 GB RAM, **4-day wall time** (extended from 36h)
+- Includes background monitor logging CPU/RAM/progress every 10 min
+- Estimated start: June 20, 2026 ~01:06 CDT; end by June 24
+
+**Other jobs (no change)**
+- Control system: 21 ns complete; job 50769634 PENDING
+- Main system equil: job 50776983 PENDING
+
+---
+
+## June 15, 2026 — Day 6
+
+**Job queue status (all three jobs PENDING as of this morning — none running)**
+
+| Job ID | Name | System | Status |
+|--------|------|--------|--------|
+| 50737753 | af2_dome24_1 | AF2 24-chain dome | PENDING (bigmem), no output yet |
+| 50769634 | 9cz2_prod | Control system production | PENDING (caslake, 5 nodes) |
+| 50776983 | 9cz2_equil | Main system equilibration | PENDING (caslake, 6 nodes) |
+
+- Control system last completed checkpoint: `step7_21.restart.coor` → **21 ns total production done**
+- AF2 dome-24: still no `.pdb` output in `af2_dome24_output/dome_24chain_input/`
+- Main system equilibration: hasn't started yet (input files in place, PENDING)
+
+**Beagle3 transfer plan — meeting with lab member at 4pm June 15**
+- Lab member (new to lab) has Beagle3 access; Dr. Haddadian suggested asking her to run jobs there
+- Goal: offload all 3 PENDING jobs to Beagle3 (faster/stronger than Midway3 for GPU and bigmem jobs)
+- Staging plan: copy files to `/project2/haddadian/junseo/beagle3-jobs/` on Midway3 (shared lab space), then she rsync's from Beagle3
+- TODO before 4pm: run the staging rsync commands (see meeting guide in session or below)
+
+**Files to stage per job:**
+
+*Job A — AF2 dome-24 (1.2 GB MSA + 64 KB FASTA):*
+```bash
+mkdir -p /project2/haddadian/junseo/beagle3-jobs/af2_dome24/msas
+rsync -av /scratch/midway3/junseo/26summer-research/alphafold/9cz2/dome_24chain_input.fasta \
+    /project2/haddadian/junseo/beagle3-jobs/af2_dome24/
+rsync -av /scratch/midway3/junseo/26summer-research/alphafold/9cz2/af2_dome24_output/dome_24chain_input/msas/ \
+    /project2/haddadian/junseo/beagle3-jobs/af2_dome24/msas/
+```
+
+*Job B — Control system production resume from step7_21 (~60 MB):*
+```bash
+mkdir -p /project2/haddadian/junseo/beagle3-jobs/control_prod
+rsync -av \
+    /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step5_input.psf \
+    /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_21.restart.coor \
+    /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_21.restart.vel \
+    /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_21.restart.xsc \
+    /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_production.inp \
+    /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/run_prod_cpu.sh \
+    /project2/haddadian/junseo/beagle3-jobs/control_prod/
+rsync -av /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/toppar/ \
+    /project2/haddadian/junseo/beagle3-jobs/control_prod/toppar/
+```
+
+*Job C — Main system equilibration (full directory, 2.1 GB):*
+```bash
+rsync -av /scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/ \
+    /project2/haddadian/junseo/beagle3-jobs/main_equil/
+```
+
+**What to ask the lab member (fill in job scripts with her answers):**
+1. Her Beagle3 username → scratch path `/scratch/beagle3/<username>/`
+2. CPU partition name → `sinfo` on Beagle3
+3. NAMD module name → `module avail namd` on Beagle3
+4. AlphaFold module → `module avail alphafold` on Beagle3 (may not be installed)
+5. Account name on Beagle3 → probably `pi-haddadian`, confirm with her
+
+**Job script changes needed for Beagle3** (Midway3 → Beagle3):
+- `--partition=caslake` → her Beagle3 CPU partition
+- `--account=pi-haddadian` → confirm account name
+- `module load namd/2.14` → match what's on Beagle3
+- AF2 script: remove `JAX_PLATFORM_NAME=cpu` and `XLA_FLAGS` if running on GPU; update all hardcoded paths
+
+**After meeting:**
+- Update CLAUDE.md with Beagle3 job IDs once submitted
+- If Beagle3 jobs submitted, decide whether to `scancel 50737753 50769634 50776983` on Midway3
+
+**Files created this session:**
+- `beagle3-cheatsheet.md` — command reference for Beagle3 (sinfo, squeue, module avail, rsync, etc.)
+
+---
+
 ## June 12, 2026 — Day 5
 
 **RFdiffusion — module available, planning deferred**
