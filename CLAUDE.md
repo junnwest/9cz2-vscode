@@ -231,12 +231,12 @@ All AlphaFold scripts at `/scratch/midway3/junseo/26summer-research/alphafold/9c
   - MSA stage completed (features.pkl generated); inference OOMed on A100 (~986 GB estimated)
   - Output at `af2_opening_output_13chain/` — MSA dirs A/ (HflK) and B/ (HflC) reused for dome-24 run
 
-### AlphaFold Run — HflK Monomer (completed June 16, 2026)
-- **Script**: `af2_hflk_mono` — SLURM job 50799910
-- **Partition**: GPU (A100), ~1h wall time
-- **Input**: Full HflK sequence (419 aa), monomer_ptm preset
-- **Output**: `af2_hflk_mono_output/hflk_monomer/` — 5 ranked models (`ranked_0.pdb` … `ranked_4.pdb`)
-- **Notes**: pLDDT for M3 region (356–419) is 54–62 (low confidence, consistent with flexibility); includes hydrogens; M1/M2 (1–78) present but unreliable
+### AlphaFold Run — HflK Monomer (completed June 17, 2026)
+- **Script**: job on Midway3 A100 GPU, job ID 50799910; output at `af2_hflk_mono_output/`
+- **Input**: HflK full sequence (1–419 aa); custom template = `hflk_fullmin_chain_a.pdb` (Rajiv's resolved chain A, segname AP1, resid 79–355)
+- **Output**: `ranked_0.pdb` — locally at `hflk_mono_ranked_0.pdb` (504 KB)
+- **pLDDT per region**: TM (1–78) = 44.8, resolved (79–355) = 90.3, M3 tail (356–419) = 44.5
+- **Interpretation**: Low pLDDT on M3 reflects intrinsic disorder, not wrong secondary structure; high confidence on resolved region validates the custom template approach
 
 ### AlphaFold Run — Dome-24 (RUNNING on 1.5 TB node, job 50972223, since June 21, 2026)
 - **Active script**: `job_dome24_model1_1536g.sh` — **job 50972223**, RUNNING on `midway3-0318` since June 21 19:03 CDT
@@ -251,15 +251,25 @@ All AlphaFold scripts at `/scratch/midway3/junseo/26summer-research/alphafold/9c
   - 50698644 — 750 GB → OUT_OF_MEMORY (Jun 12)
   - 50737753 — 1.5 TB (0318) → ran model_1 ~29.5h, **manually cancelled** Jun 18 (not OOM, not finished)
   - 50894863 — 750 GB (0317) → OUT_OF_MEMORY Jun 19, exit 137 (this script lacked `--nodelist` → wrong node)
-- **Walltime RISK (open)**: prior 1.5 TB run was >29.5h and unfinished; 36h cap leaves little margin, and **AF2 inference does NOT checkpoint** → a timeout = total loss. RCC emailed to either extend job 50972223 TimeLimit in place (`scontrol update job=... TimeLimit=...`, admin-only, preserves progress) or grant `bigmem-pr+`.
+- **Walltime (resolved June 22)**: prior 1.5 TB run was >29.5h and unfinished, and **AF2 inference does NOT checkpoint** → a timeout = total loss. After the RCC request, job 50972223 now runs under a **4-day wall time** (no longer at the 36h `bigmem` cap) — not at risk as of June 22 (26h+ elapsed, features.pkl complete, no PDB models yet).
 - **Fallback (ready)**: `hflk_af2_m3rotated.pdb` + `replace_hflk.py` if dome-24 fails.
 - **Post-run plan**: Use best-ranked model output directly as input to CHARMM-GUI for dome-only membrane system; discard HflK M1/M2 (1–78) predictions as TM region is unreliable without membrane context
+
+### Monomer M3 Approach — Attempted and Abandoned (June 16–17, 2026)
+Tried using `hflk_mono_ranked_0.pdb` to add M3 tails to all 12 HflK chains in `9cz2minimized_ftsh_fixed.pdb`:
+1. Superimposed AF2 monomer onto each HflK chain (CA resid 79–355), extracted M3 (356–419): `scripts/superimpose_hflk_m3.tcl`
+2. Rotated each M3 tail in 15° steps about the CA(355)→CA(356) bond axis to minimize CA-CA clashes: `scripts/declash_m3.tcl` (Rodrigues rotation, VMD batch mode)
+3. **Result**: Min CA-CA = 0.83 Å (down from 0.65 Å), min all-atom = 0.17 Å, 2,191 all-atom clashes < 1.5 Å — unacceptably severe
+4. **Fatal flaw**: Rotation was clash-driven with no dome geometry awareness; several M3 tails oriented outward (away from dome interior) rather than inward — structurally wrong
+- **Decision**: Abandoned in favor of (a) the AF3-monomer M3 graft + 2D dihedral declash → NAMD minimization pipeline (Day 15, `scripts/minimize_m3/`), and (b) the dome-24 multimer run which predicts all 24 M3 tails simultaneously in dome context → correct inward orientation guaranteed by multimer modeling
 
 ### Output of structure preparation
 - `9cz2minimized_08jun_01.pdb` — Rajiv's complete structure (no water); at root of `26summer-research/`
 - `9cz2_tm_centered_for_charmmgui.pdb` — z-translated by 56.4 Å (corrected membrane position); used for original (broken) CHARMM-GUI session 8095657229
-- `9cz2minimized_08jun_01_ftsh_fixed.pdb` — **corrected CHARMM-GUI input** (local copy: `9CZ2/`); FtsH TM chain IDs A–J renamed to digits 1–9/0 and segment IDs AP2–JP2 → 1P2–0P2 to resolve chain ID collision; all 36 segments (PROA–PRAJ) now imported correctly; z-translation +56.4 + 30 applied in CHARMM-GUI step 2
-- `9cz2_dome_original.pdb` — dome-only (24 HflK/HflC chains, no FtsH), extracted from vanilla 9CZ2.cif, zero-occupancy atoms filtered out; chains A–X (A=HflK, B=HflC alternating); HflC chains start at res 18 (post-TM), HflK chains start at res 79; used for visual inspection and as AF2 template reference
+- `9cz2minimized_08jun_01_ftsh_fixed.pdb` — **corrected CHARMM-GUI input** (local copy in repo root); FtsH TM chain IDs A–J renamed to digits 1–9/0 and segment IDs AP2–JP2 → 1P2–0P2 to resolve chain ID collision; all 36 segments (PROA–PRAJ) now imported correctly; z-translation +56.4 + 30 applied in CHARMM-GUI step 2; **chain assignments**: HflK = A,C,E,G,I,K,M,O,Q,S,U,X (start res 79); HflC = B,D,F,H,J,L,N,P,R,T,V,W (start res 1); FtsH = 0-9,Y,Z (start res 31)
+- `9cz2_dome_original.pdb` — dome-only (24 HflK/HflC chains, no FtsH), extracted from vanilla 9CZ2.cif, zero-occupancy atoms filtered out; HflC starts at res 18, HflK at res 79; visual reference only (NOT for pipeline input — lacks Rajiv's AF2-filled regions)
+- `hflk_mono_ranked_0.pdb` — AF2 HflK monomer best model (504 KB); resid 1–419; local copy
+- `hflk_fullmin_chain_a.pdb` — Rajiv's resolved HflK chain A (segname AP1, resid 79–355); extracted from `9cz2minimized_ftsh_fixed.pdb`; used as custom AF2 template
 
 ### Chain ID / Segname mapping in ftsh_fixed.pdb
 - **HflK chains**: A, C, E, G, I, K, M, O, Q, S, U, X → segnames AP1, CP1, EP1, GP1, IP1, KP1, MP1, OP1, QP1, SP1, UP1, XP1
@@ -348,33 +358,58 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 21–22, 2026 — Day 14)
+## Current Systems (as of June 22, 2026 — Day 15)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
-### Dome-Only MD System — PRIMARY (planned)
-- **Input**: Best-ranked AF2 dome-24 output model (**job 50972223, RUNNING on 1.5 TB node** — see AlphaFold Run — Dome-24 above) — OR use HflK monomer + M3 rotation result (see below)
-- **Chains**: 24 HflK/HflC, no FtsH; HflK M1/M2 (1–78) trimmed before CHARMM-GUI
-- **Status**: AF2 dome-24 computing (job 50972223 on midway3-0318); NO model output yet; M3 rotation approach ready as fallback. Walltime risk on 36h cap — see dome-24 section.
-- **Pipeline**: AF2 output → trim TM region → CHARMM-GUI membrane build → equilibration → production
+### M3 Grafted Dome — NAMD Minimization (ACTIVE)
+- **Input**: `dome_m3_rotated.pdb` — Rajiv's dome + AF3 HflK M3 tails (356–419) grafted onto all 12 HflK chains; junction gaps closed; 2D omega/phi rotation search (2° steps) with inward constraint applied
+- **Clash summary**: 0 severe clashes on chains Q, S; 1–13 on remaining chains
+- **Minimization**: `minimize_m3/` pipeline — solvated (1,452,343 atoms, 284.5 × 272.5 × 197.5 Å, water only, no membrane); M3 free (B=0), dome restrained (B=500)
+- **Current job**: **51015689** PENDING on Midway3 (4 caslake nodes, 4h)
+- **Output**: `minimize_m3/dome_m3_minimized.*` (not yet produced)
+- **Python environment**: `~/mda_env` on Midway3 (MDAnalysis 2.7.0, membrane-curvature, matplotlib)
+- **Note**: NAMD parameter files must use `namd/toppar/` (CHARMM-GUI preprocessed), NOT root `toppar/` (raw CHARMM with scripting). Full parameter set from step6.1 required to cover all cross-referenced atom types (e.g. ON3 from toppar_water_ions.str needs par_all36_na.prm).
+- **Long-term solution**: AF2 dome-24 job 50972223 (see below) — predicts all M3 tails in dome context from scratch; use its ranked_0.pdb instead of the grafted structure once available
+
+### Dome-Only MD System — PRIMARY (pending AF2)
+- **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
+- **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
+- **AF2 status**: 26h+ elapsed as of June 22; features.pkl complete (454 MB); no PDB models yet; 4-day wall time (not at risk); running on midway3-0318
+- **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
 - **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost and because it does not drive dome asymmetry
 - **M3 rotation fallback**: `hflk_af2_m3rotated.pdb` (res 79–419) was computed June 18 with 1 clash across 12 chains; if dome-24 fails, assemble full dome with `replace_hflk.py` then minimise before CHARMM-GUI
 
-### Main System — 9cz2 full dome + membrane (on hold)
-- **Path** (planned): `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`
-- **Input**: `9CZ2/9cz2minimized_08jun_01_ftsh_fixed.pdb` (z-translated +56.4 + 30 in CHARMM-GUI step 2)
-- **CHARMM-GUI session**: 8119908655 — all 36 chains selected (PROA–PRAJ); submitted June 11, 2026
-  - Previous session 8095657229 was broken: FtsH chains AP2–JP2 shared chain IDs A–J with dome P1 chains; CHARMM-GUI's 26-segment cap silently dropped the 10 FtsH TM chains; fixed by renaming FtsH chain IDs to digits
-- **Status**: On hold pending AF2 dome-24 result; equilibration started on Beagle3 (step6.1 DCD present)
-- **Pipeline**: CHARMM-GUI NAMD output → equilibration (step6.1–6.6) → production → GaMD
+### Main System — 9cz2 full dome + membrane (equilibration queued)
+- **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`
+- **Input**: `9cz2minimized_08jun_01_ftsh_fixed.pdb` (z-translated +56.4 + 30 in CHARMM-GUI step 2)
+- **CHARMM-GUI session**: 8119908655 — all 36 chains selected (PROA–PRAJ); completed June 14, 2026
+- **System size**: 1,733,042 atoms (full protein + membrane + water/ions)
+- **Status**: Equilibration **PENDING** — SLURM job 50776983, 6 nodes, 36h wall time; also staged for Beagle3 GPU (see below)
+  - step6.1–6.3: 125,000 steps (0.25 ns each); step6.4–6.6: 250,000 steps (0.5 ns each); total 2.25 ns
+- **Pipeline**: ~~CHARMM-GUI build~~ → equilibration (step6.1–6.6) ← **HERE** → production → GaMD
 
 ### Control System — Membrane-only baseline
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/`
 - **PSF**: `step5_input.psf` — 632,689 atoms, lipids only (TLCL1, DPPE, POPG, DOPG, LOACL1 + water/ions)
 - **CHARMM-GUI session**: 7628525516, built April 16, 2026
-- **Status**: **~22 ns** (`step7_22.restart.coor` on both Midway3 and Beagle3 as of June 21–22); **NO job currently running** — resubmit needed to continue
-- **Performance**: ~4.0 ns/day (4–5 caslake nodes)
+- **Status**: ~31 ns complete — step7_1–21 on Midway3 (21 ns) + step7_22 partial on Beagle3 via Kaylie (~10 ns, job cut by wall time); Midway3 also has an independent step7_22 (~6.5 ns, ignore in favor of Beagle3 version)
+- **Performance**: ~4.0 ns/day (4–5 caslake nodes); ~6.7 ns/day on Beagle3 4× A100 (with CUDASOAintegrate off)
+- **Analysis completed (June 22)**: Thickness map and mean curvature map over ~31 ns; results at `analysis/control_thickness_31ns.{png,npy}` and `analysis/control_curvature_31ns.{png,npy}`
 - **Purpose**: Baseline to isolate membrane effects from protein effects
+
+### Beagle3 GPU Jobs — Staged, Awaiting Resubmission by Kaylie
+- **Staging location (Midway3)**: `/project2/haddadian/junseo/beagle3-jobs/`
+- **Local scripts**: `scripts/beagle3/` (committed)
+- **Lab contact**: Kaylie (has Beagle3 access); submits from Beagle3 scratch
+
+| Job | Staging dir | Status | Issues fixed |
+|-----|------------|--------|--------------|
+| Main equil (step6.1–6.6) | `beagle3-jobs/main_equil/namd/` | Ready to resubmit | chmod removed from sbatch; `CUDASOAintegrate off` added to all 6 step6 inp files |
+| Control prod (step7_22+) | `beagle3-jobs/control_prod/` | Ready to resubmit | chmod removed; `step5_input.str` staged |
+| AF2 dome-24 | `beagle3-jobs/af2_dome24/` | Contingency only | Keep Midway3 job 50737753 as primary; Beagle3 if Midway3 fails |
+
+**NAMD3 GPU fix**: All NAMD3 step6 configs have `CUDASOAintegrate off` before `rigidBonds all` — this prevents RATTLE constraint failures from single-precision GPU arithmetic on large systems.
 
 ## Midway3 Directory Structure
 
@@ -396,9 +431,10 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 │   ├── job_dome24_1536g.sh           # 1.5TB-pinned (job 50737753, cancelled at ~29.5h)
 │   ├── job_dome24_bigmem.sh          # all-5-models bigmem run (job 50698644, OOM)
 │   ├── af2_hflc_mono_output/         # HflC monomer prediction output [Rajiv]
-│   ├── af2_hflk_mono_output/         # HflK monomer output (job 50799910, done Jun 16) ← ranked_0.pdb = best
+│   ├── af2_hflk_mono_output/         # HflK monomer output (job 50799910, complete Jun 17)
 │   ├── af2_opening_output_13chain/   # 13-chain MSA output (reused for dome-24)
-│   ├── af2_dome24_output/            # Dome-24 output (only msas/ + features.pkl so far; NO model yet)
+│   ├── af2_dome24_output/            # Dome-24 output (in progress; only msas/ + features.pkl so far, NO model yet)
+│   │   └── dome_24chain_input/       # Model PDBs appear here when complete
 │   ├── dome_24chain_input.fasta      # 24-chain HflK/HflC input
 │   └── *.fasta                       # Other input sequences
 │
@@ -412,12 +448,19 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 │   ├── step5_input.inp               # NAMD input config template
 │   └── namd/                         # ← ACTIVE SIMULATION DIRECTORY
 │       ├── step5_input.psf           # 632,689 atoms
+│       ├── step5_input.str           # Box dimensions — must be staged alongside PSF
 │       ├── step6.1-6.6_equilibration.* # Equilibration (complete)
-│       ├── step7_1 through step7_21.*  # 21 ns production (complete on Midway3; 22+ on Beagle3)
-│       └── job-submit-step7-13plus-cpu.sbatch  # Job script
+│       ├── step7_1 through step7_21.*  # 21 ns production (complete)
+│       ├── job-submit-step7-cpu.sbatch  # Pending job (50769634, 5 nodes)
+│       └── run_prod_cpu.sh           # Loops step7_22+
 │
-├── charmm-gui-9cz2fulldome-8119908655/  # MAIN SYSTEM — 9cz2 full dome + membrane (on hold, building)
-│   └── [to be populated once CHARMM-GUI session 8119908655 completes]
+├── charmm-gui-9cz2fulldome-8119908655/  # MAIN SYSTEM — 9cz2 full dome + membrane
+│   ├── 9cz2minimized_08jun_01_ftsh_fixed.pdb  # Input PDB (also local repo root)
+│   ├── toppar/                       # CHARMM36m force field files (includes top_all36_prot.rtf)
+│   └── namd/                         # ← ACTIVE SIMULATION DIRECTORY
+│       ├── step5_input.psf           # 1,733,042 atoms
+│       ├── step6.1-6.6_equilibration.inp  # Equilibration configs (CUDASOAintegrate off added)
+│       └── job-submit-equilibration.sbatch  # Pending job (50776983, 6 nodes)
 │
 │   # NOTE: charmm-gui-9cz2fulldome-8095657229/ was superseded (broken PSF, FtsH chains dropped)
 │
@@ -442,6 +485,21 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 └── namd-af-singlechain/              # RETIRED: HflC monomer test
     ├── step6.1-6.4 equilibration     # Ran through step6.4 only
     └── restraints/ (POPC membrane)
+```
+
+### Beagle3 Staging (on Midway3, shared lab space)
+```
+/project2/haddadian/junseo/beagle3-jobs/
+├── main_equil/namd/          # 9cz2 full dome equilibration (step6.1–6.6), 1,733,042 atoms
+│   ├── step5_input.psf/.pdb  # System files
+│   ├── step6.1-6.6_*.inp     # All have CUDASOAintegrate off (RATTLE fix for NAMD3 GPU)
+│   └── job-submit-beagle3.sbatch  # 4 GPUs, 36h, beagle3-prio
+├── control_prod/             # Control membrane production (step7_22+), 632,689 atoms
+│   ├── step5_input.psf/.pdb/.str  # System files (str = box dims, was missing → fixed)
+│   └── job-submit-beagle3.sbatch  # 4 GPUs, 36h, beagle3-prio
+└── af2_dome24/               # Contingency: AF2 dome-24 on Beagle3 bigmem
+    ├── dome_24chain_input.fasta
+    └── job-submit-beagle3.sbatch
 ```
 
 ### Retired Systems
