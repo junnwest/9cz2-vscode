@@ -146,6 +146,22 @@ Will update once step7_1 timing is available for that system.
 
 ---
 
+## Minimization Benchmarks — dome_m3 (1,452,343 atoms, water only)
+
+10,000-step conjugate gradient minimization. NAMD 2.14 MPI, caslake partition.
+
+| Job | Nodes | CPUs | WallClock | Restraint B | Notes |
+|-----|-------|------|-----------|-------------|-------|
+| 51015689 | 4 | 192 | 919s (15 min) | 500 | v1; no DCD output |
+| 51031241 | 1 | 48 | 2708s (45 min) | 500 | v2_1n; 11 clashes < 1.5 Å post-min |
+| 51034782 | 2 | 96 | 1507s (25 min) | 10 | v3; clash count pending |
+| 51034788 | 1 | 48 | ~45 min (est) | 10 | v3_1n; running at session end |
+
+B=500 was wrong (freezes dome atoms); B=10 is Dr. Haddadian's recommended restraint strength.
+Scaling is near-linear: 4 nodes ≈ 3× faster than 1 node.
+
+---
+
 ## Raw Job History (sacct)
 
 All junseo jobs 2026-03-01 to 2026-06-12 — relevant simulation jobs only:

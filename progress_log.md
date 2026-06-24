@@ -7,6 +7,52 @@
 
 ---
 
+## June 23, 2026 — Day 16
+
+**NAMD minimization config fixes**
+- Added missing output controls: `dcdfreq 100`, `restartfreq 500`, `XSTFreq 100`, `outputEnergies 40`
+- Fixed parameters: `stepspercycle 20→8`, `nonbondedFreq 1→2`, added `fullElectFrequency 4`
+- Previous run (v1, job 51015689) had no DCD; outputs renamed to `dome_m3_minimized_v1.*`
+
+**Minimization v2 — B=500 restraints (wrong)**
+- Submitted 2-node (51030625, later cancelled) and 1-node (51031241, completed 45 min / 2708s)
+- Clash check on final frame: 11 clashes < 1.5 Å, min distance 1.205 Å — M3 stuck against frozen dome
+- Root cause: B=500 is far too stiff (essentially freezes dome solid); Dr. Haddadian's recommendation is B=10
+
+**Minimization v3 — B=10 restraints (correct)**
+- Updated `04_make_restraints.py`: B=500 → B=10; regenerated `restraints.pdb` on Midway3
+- Output renamed to `dome_m3_minimized_v3`
+- 2-node (51034782): completed 25 min / 1507s — `dome_m3_minimized_v3.dcd` downloaded locally
+- 1-node (51034788): RUNNING at session end (~38 min elapsed, expected ~45 min)
+- v3 clash count not yet checked — pending
+
+**Minimization scaling benchmark (water-only solvated system, 1,452,343 atoms)**
+
+| Nodes | CPUs | WallClock | Restraint |
+|-------|------|-----------|-----------|
+| 4 (v1) | 192 | 919s (15 min) | B=500 |
+| 2 (v3) | 96 | 1507s (25 min) | B=10 |
+| 1 (v2) | 48 | 2708s (45 min) | B=500 |
+
+**Lipid proximity analysis — no-dome FtsH**
+- Ran `lipid-prox-FtsH-namd.tcl` (adapted) on `namd_caslake/` no-dome system: step7_production + step7_2–11 (98 frames, ~10 ns)
+- FtsH TM selection: segnames PROV/W/X/Y/Z + PRAA-PRAG, resid 1–22 and 97–120; cutoff 6 Å
+- Job 51033869 completed; node failure caused one requeue (output wiped and rerun)
+- Added `--no-requeue` to v2 job (51035563, still running); both write to distinct output files
+- Output downloaded locally: `analysis/lipid_count_FtsH_nodome_namd.dat`
+
+**AF2 dome-24 (job 50972223)**
+- ~47h elapsed at session end; 0 models complete; 748 GB RAM stable, ~755% CPU
+- stderr silent since 19:12 CDT June 21 (normal — AF2 logs nothing during neural network inference)
+- 4-day wall time was a rough guess; completion time genuinely unknown; failure risk is real
+- Cannot rely on this job — M3 grafting + minimization approach must work independently
+
+**GPU scaling email**
+- Dr. Zand response: single A100 node estimated 60–80 ns/day for 1.7M atom system; referred to Dr. Trung (ndtrung@uchicago.edu) for deeper expertise
+- Drafted follow-up email to Dr. Trung citing Zand referral
+
+---
+
 ## June 22, 2026 — Day 15
 
 **M3 tail grafting — AF3 monomer approach**

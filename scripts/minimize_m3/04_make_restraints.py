@@ -2,7 +2,7 @@
 """
 Generate restraint PDB for NAMD minimization:
   B = 0.0  for M3 residues (resid 356-419) on HflK chains (A,C,E,G,I,K,M,O,Q,S,U,X)
-  B = 500.0 for everything else (dome, water, ions)
+  B = 10.0 for everything else (dome, water, ions) — per Dr. Haddadian
 """
 
 IN_PDB  = "/scratch/midway3/junseo/26summer-research/minimize_m3/dome_m3_ionized.pdb"
@@ -24,11 +24,11 @@ with open(IN_PDB) as fin, open(OUT_PDB, "w") as fout:
             if chain in HFLK_CHAINS and M3_START <= resid <= M3_END:
                 bfac = 0.0   # free to move
             else:
-                bfac = 500.0  # restrained
+                bfac = 10.0  # restrained
 
             line = line[:60] + f"{bfac:6.2f}" + line[66:]
         fout.write(line)
 
 print(f"Restraint PDB written to {OUT_PDB}")
 print("  B=0   -> M3 (resid 356-419) on HflK chains A,C,E,G,I,K,M,O,Q,S,U,X")
-print("  B=500 -> everything else")
+print("  B=10  -> everything else")

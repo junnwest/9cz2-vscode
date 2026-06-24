@@ -327,36 +327,38 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 22, 2026 — Day 15)
+## Current Systems (as of June 23, 2026 — Day 16)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
 ### M3 Grafted Dome — NAMD Minimization (ACTIVE)
 - **Input**: `dome_m3_rotated.pdb` — Rajiv's dome + AF3 HflK M3 tails (356–419) grafted onto all 12 HflK chains; junction gaps closed; 2D omega/phi rotation search (2° steps) with inward constraint applied
-- **Clash summary**: 0 severe clashes on chains Q, S; 1–13 on remaining chains
-- **Minimization**: `minimize_m3/` pipeline — solvated (1,452,343 atoms, 284.5 × 272.5 × 197.5 Å, water only, no membrane); M3 free (B=0), dome restrained (B=500)
-- **Current job**: **51015689** PENDING on Midway3 (4 caslake nodes, 4h)
-- **Output**: `minimize_m3/dome_m3_minimized.*` (not yet produced)
+- **Clash summary before minimization**: 0 severe clashes on chains Q, S; 1–13 on remaining chains
+- **Minimization pipeline**: `minimize_m3/` — solvated (1,452,343 atoms, 284.5 × 272.5 × 197.5 Å, water only, no membrane); M3 free (B=0), dome restrained (B=10 per Dr. Haddadian); DCD output every 100 steps
+- **Restraint correction (June 23)**: Original B=500 was wrong (freezes dome solid); corrected to B=10 in `04_make_restraints.py`
+- **Versions**:
+  - v1 (job 51015689, 4 nodes, B=500): completed; no DCD; outputs at `dome_m3_minimized_v1.*`
+  - v2_1n (job 51031241, 1 node, B=500): completed 45 min; 11 clashes < 1.5 Å, min dist 1.205 Å; outputs at `dome_m3_minimized_v2_1n.*`
+  - **v3 (job 51034782, 2 nodes, B=10)**: completed 25 min; `dome_m3_minimized_v3.dcd` downloaded locally; **clash count pending** ← check at next session
+  - v3_1n (job 51034788, 1 node, B=10): RUNNING at session end (~38 min elapsed)
 - **Python environment**: `~/mda_env` on Midway3 (MDAnalysis 2.7.0, membrane-curvature, matplotlib)
-- **Note**: NAMD parameter files must use `namd/toppar/` (CHARMM-GUI preprocessed), NOT root `toppar/` (raw CHARMM with scripting). Full parameter set from step6.1 required to cover all cross-referenced atom types (e.g. ON3 from toppar_water_ions.str needs par_all36_na.prm).
-- **Long-term solution**: AF2 dome-24 job 50972223 (see below) — predicts all M3 tails in dome context from scratch; use its ranked_0.pdb instead of the grafted structure once available
+- **Note**: NAMD parameter files must use `namd/toppar/` (CHARMM-GUI preprocessed), NOT root `toppar/`. Full parameter set from step6.1 required (e.g. ON3 from toppar_water_ions.str needs par_all36_na.prm).
 
 ### Dome-Only MD System — PRIMARY (pending AF2)
 - **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
-- **AF2 status**: 26h+ elapsed as of June 22; features.pkl complete (454 MB); no PDB models yet; 4-day wall time (not at risk); running on midway3-0318
+- **AF2 status**: ~47h elapsed as of June 23 session end; features.pkl complete (454 MB); no PDB models yet; running on midway3-0318
+- **Wall time warning**: 4-day wall time was a rough guess — actual inference time for 9,036 residues on 48 CPUs unknown; failure risk is real; cannot be relied upon as primary approach
 - **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
-- **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost and because it does not drive dome asymmetry
-- **M3 rotation fallback**: `hflk_af2_m3rotated.pdb` (res 79–419) was computed June 18 with 1 clash across 12 chains; if dome-24 fails, assemble full dome with `replace_hflk.py` then minimise before CHARMM-GUI
+- **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost
 
-### Main System — 9cz2 full dome + membrane (equilibration queued)
+### Main System — 9cz2 full dome + membrane (equilibration complete)
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`
 - **Input**: `9cz2minimized_08jun_01_ftsh_fixed.pdb` (z-translated +56.4 + 30 in CHARMM-GUI step 2)
 - **CHARMM-GUI session**: 8119908655 — all 36 chains selected (PROA–PRAJ); completed June 14, 2026
 - **System size**: 1,733,042 atoms (full protein + membrane + water/ions)
-- **Status**: Equilibration **PENDING** — SLURM job 50776983, 6 nodes, 36h wall time; also staged for Beagle3 GPU (see below)
-  - step6.1–6.3: 125,000 steps (0.25 ns each); step6.4–6.6: 250,000 steps (0.5 ns each); total 2.25 ns
-- **Pipeline**: ~~CHARMM-GUI build~~ → equilibration (step6.1–6.6) ← **HERE** → production → GaMD
+- **Status**: Equilibration **COMPLETE** — step6.1–6.6 DCDs all present (completed June 18–19); no production yet; job 50776983 no longer in queue
+- **Pipeline**: ~~CHARMM-GUI build~~ → ~~equilibration~~ → production → GaMD
 
 ### Control System — Membrane-only baseline
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/`
@@ -376,7 +378,7 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 |-----|------------|--------|--------------|
 | Main equil (step6.1–6.6) | `beagle3-jobs/main_equil/namd/` | Ready to resubmit | chmod removed from sbatch; `CUDASOAintegrate off` added to all 6 step6 inp files |
 | Control prod (step7_22+) | `beagle3-jobs/control_prod/` | Ready to resubmit | chmod removed; `step5_input.str` staged |
-| AF2 dome-24 | `beagle3-jobs/af2_dome24/` | Contingency only | Keep Midway3 job 50737753 as primary; Beagle3 if Midway3 fails |
+| AF2 dome-24 | `beagle3-jobs/af2_dome24/` | Contingency only | Midway3 job 50972223 is primary; wall time uncertain — revisit if job fails |
 
 **NAMD3 GPU fix**: All NAMD3 step6 configs have `CUDASOAintegrate off` before `rigidBonds all` — this prevents RATTLE constraint failures from single-precision GPU arithmetic on large systems.
 
