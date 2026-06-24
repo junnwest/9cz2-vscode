@@ -11,7 +11,7 @@ Speed formula: `ns/day = 86400 / WallClock_seconds` (per 500,000-step = 1 ns run
 |--------|-------------|-------|--------|
 | **control** | Membrane-only (DPPE/POPG/DOPG/LOACL1/TLCL1 + water/ions, no protein) | 632,689 | charmm-gui-7628525516 |
 | **no-dome** | FtsH embedded in membrane, HflK/C dome removed | < 632,689 (estimated ~550k) | namd_caslake / namd |
-| **full 9cz2** | Full dome + FtsH + membrane (main system) | TBD — CHARMM-GUI 8119908655 building | — |
+| **full 9cz2** | Full dome + FtsH + membrane (main system) | 1,733,042 | charmm-gui-9cz2fulldome-8119908655 |
 
 Note: the no-dome system uses ~6,028 MB memory vs control ~6,775 MB → confirms no-dome is smaller despite having protein. Protein systems run slower per atom due to complex bonded interactions and harder load balancing.
 
@@ -143,6 +143,25 @@ Full system (all 36 chains + membrane) will be ~2–4× larger than control.
 Speed scales roughly as 1/N_atoms for fixed node count.
 If full system is ~1.5M atoms (~2.4× control): expect **~1.0–1.5 ns/day at 5 nodes**.
 Will update once step7_1 timing is available for that system.
+
+---
+
+## GPU Benchmark — Full 9cz2 System (1,733,042 atoms, Midway3 A100)
+
+NAMD 3.0.1-multicore-cuda, single node, `CUDASOAintegrate on` (GPU-resident mode).
+50,000 steps (0.1 ns) from step6.6 restart. Scripts at `benchmark_gpu/` in namd dir.
+
+Reference: Dr. Trung (RCC) — 1 GPU + 8 PE = **13 ns/day** for 1M atom STMV system on Beagle3 A100.
+Multi-GPU gave no benefit at 1M atoms; expect similar saturation behavior at 1.7M.
+
+| Job ID | Config | GPUs | PEs | ns/day | Notes |
+|--------|--------|------|-----|--------|-------|
+| 51044706 | bench_1gpu_8pe | 1 | 8 | — | PENDING |
+| 51044707 | bench_1gpu_16pe | 1 | 16 | — | PENDING |
+| 51044708 | bench_2gpu_16pe | 2 | 16 | — | PENDING |
+| 51044709 | bench_4gpu_32pe | 4 | 32 | — | PENDING |
+
+Update ns/day once jobs complete: `grep 'TIMING' benchmark_gpu/bench_*_JOBID.log | tail -1`
 
 ---
 

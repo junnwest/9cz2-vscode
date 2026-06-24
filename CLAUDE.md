@@ -327,30 +327,50 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 23, 2026 — Day 16)
+## Current Systems (as of June 24, 2026 — Day 17)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
-### M3 Grafted Dome — NAMD Minimization (ACTIVE)
+### M3 Grafted Dome — NAMD Minimization (COMPLETE — ready for CHARMM-GUI)
 - **Input**: `dome_m3_rotated.pdb` — Rajiv's dome + AF3 HflK M3 tails (356–419) grafted onto all 12 HflK chains; junction gaps closed; 2D omega/phi rotation search (2° steps) with inward constraint applied
 - **Clash summary before minimization**: 0 severe clashes on chains Q, S; 1–13 on remaining chains
 - **Minimization pipeline**: `minimize_m3/` — solvated (1,452,343 atoms, 284.5 × 272.5 × 197.5 Å, water only, no membrane); M3 free (B=0), dome restrained (B=10 per Dr. Haddadian); DCD output every 100 steps
-- **Restraint correction (June 23)**: Original B=500 was wrong (freezes dome solid); corrected to B=10 in `04_make_restraints.py`
 - **Versions**:
-  - v1 (job 51015689, 4 nodes, B=500): completed; no DCD; outputs at `dome_m3_minimized_v1.*`
-  - v2_1n (job 51031241, 1 node, B=500): completed 45 min; 11 clashes < 1.5 Å, min dist 1.205 Å; outputs at `dome_m3_minimized_v2_1n.*`
-  - **v3 (job 51034782, 2 nodes, B=10)**: completed 25 min; `dome_m3_minimized_v3.dcd` downloaded locally; **clash count pending** ← check at next session
-  - **v3_1n (job 51034788, 1 node, B=10)**: completed; outputs at `dome_m3_minimized_v3_1n.*` on Midway3; clash count also pending
+  - v1 (job 51015689, 4 nodes, B=500): no DCD; outputs at `dome_m3_minimized_v1.*`
+  - v2_1n (job 51031241, 1 node, B=500): 11 clashes < 1.5 Å, min dist 1.205 Å
+  - **v3 (job 51034782, 2 nodes, B=10)**: CLEAN — 12 contacts all at LEU355 C ↔ ASP356 N peptide bond (correct geometry, not clashes); `dome_m3_minimized_v3.dcd` local
+  - v3_1n (job 51034788, 1 node, B=10): completed; outputs at `dome_m3_minimized_v3_1n.*` on Midway3
+- **Extracted PDBs (local)**:
+  - `dome_m3_minimized_v3_protein.pdb` — full complex (HflK + HflC + FtsH, no water); note: `dome_m3_rotated.pdb` included FtsH
+  - `dome_m3_minimized_v3_dome.pdb` — dome-only (126,696 atoms, HflK + HflC only, FtsH stripped)
+  - **Caveat**: both have VMD hex atom numbers (>99,999 atoms) — renumber before CHARMM-GUI upload
 - **Python environment**: `~/mda_env` on Midway3 (MDAnalysis 2.7.0, membrane-curvature, matplotlib)
 - **Note**: NAMD parameter files must use `namd/toppar/` (CHARMM-GUI preprocessed), NOT root `toppar/`. Full parameter set from step6.1 required (e.g. ON3 from toppar_water_ions.str needs par_all36_na.prm).
 
 ### Dome-Only MD System — PRIMARY (pending AF2)
 - **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
-- **AF2 status**: ~64h elapsed as of June 24; features.pkl complete (454 MB); no PDB models yet; running on midway3-0318; ~32h remaining on 4-day wall time
-- **Wall time warning**: 4-day wall time was a rough guess — actual inference time for 9,036 residues on 48 CPUs unknown; failure risk is real; cannot be relied upon as primary approach
+- **AF2 status**: ~66h elapsed as of June 24 afternoon; features.pkl complete (454 MB); no PDB models yet; running on midway3-0318; ~30h remaining on 4-day wall time
+- **Wall time warning**: 4-day wall time was a rough guess; failure risk is real
+- **Dr. Haddadian suggestion (June 24)**: extend wall time via RCC + resubmit partial system (opening region only, fewer chains)
+- **Pending actions**: (1) email RCC to extend job 50972223; (2) prepare partial FASTA for resubmission
 - **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
-- **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost
+- **Fallback**: `dome_m3_minimized_v3_dome.pdb` — M3-grafted dome, minimized, clash-free; ready for CHARMM-GUI if AF2 fails
+
+### GPU Benchmark — Midway3 A100 (PENDING)
+- **Purpose**: Characterize GPU scaling for 1.7M atom system; informed by Dr. Trung's data (1 GPU + 8 PE = 13 ns/day for 1M atoms on Beagle3 A100; multi-GPU gives no benefit)
+- **System**: main 9cz2 full dome + membrane (1,733,042 atoms), from step6.6 restart
+- **Config**: 50,000 steps, `CUDASOAintegrate on` (GPU-resident), `namd/3.0.1-multicore-cuda`
+- **Scripts**: `charmm-gui-9cz2fulldome-8119908655/namd/benchmark_gpu/`
+
+| Job ID | Config | GPUs | PEs | Status |
+|--------|--------|------|-----|--------|
+| 51044706 | bench_1gpu_8pe | 1 | 8 | PENDING |
+| 51044707 | bench_1gpu_16pe | 1 | 16 | PENDING |
+| 51044708 | bench_2gpu_16pe | 2 | 16 | PENDING |
+| 51044709 | bench_4gpu_32pe | 4 | 32 | PENDING |
+
+- All competing for single A100 node (midway3-0294); 1h wall time each
 
 ### Main System — 9cz2 full dome + membrane (equilibration complete)
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`

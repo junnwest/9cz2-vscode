@@ -7,6 +7,43 @@
 
 ---
 
+## June 24, 2026 — Day 17
+
+**Clash analysis on dome_m3_minimized_v3.dcd (final frame)**
+- 12 flagged contacts < 1.5 Å — all are ASP356 N ↔ LEU355 C on each of the 12 HflK chains
+- These are peptide bond geometry at the 355|356 grafting junction (~1.3–1.4 Å = correct bond length)
+- Not real steric clashes — M3 is clean against all dome residues
+- Structure is ready for CHARMM-GUI
+
+**PDB extraction from minimized DCD**
+- Extracted protein-only PDB from final frame via VMD: `dome_m3_minimized_v3_protein.pdb`
+- Discovered `dome_m3_rotated.pdb` input included FtsH (full complex, not dome-only); segnames 0P2–9P2, YP1, ZP1 present
+- Created dome-only version by filtering FtsH segnames: `dome_m3_minimized_v3_dome.pdb` (126,696 atoms, HflK + HflC only)
+- Note: VMD hex atom numbering (>99,999 atoms) present in both PDBs — may need renumbering before CHARMM-GUI
+
+**GPU benchmark jobs submitted (Midway3 gpu partition, A100)**
+- Background: Dr. Trung (RCC) reported 1 GPU + 8 PE = 13 ns/day for 1M atom system on Beagle3 A100; multi-GPU gives no benefit at this scale
+- Submitted 4 benchmark jobs on Midway3 A100 node (midway3-0294) using NAMD 3.0.1-multicore-cuda
+- Config: 50,000 steps (0.1 ns) from step6.6 equilibration restart of main 9cz2 system (1,733,042 atoms)
+- `CUDASOAintegrate on` (GPU-resident mode); if RATTLE errors occur, will disable
+
+| Job ID | Config | GPUs | PEs |
+|--------|--------|------|-----|
+| 51044706 | bench_1gpu_8pe | 1 | 8 |
+| 51044707 | bench_1gpu_16pe | 1 | 16 |
+| 51044708 | bench_2gpu_16pe | 2 | 16 |
+| 51044709 | bench_4gpu_32pe | 4 | 32 |
+
+- All PENDING at session end (competing for single A100 node)
+
+**AF2 dome-24 (job 50972223)**
+- ~66h elapsed; still RUNNING; 0 models complete; ~30h remaining on 4-day wall time
+- Dr. Haddadian email: suggested extending wall time via RCC + resubmitting a partial system
+- Note: current job is already dome-only (no FtsH); partial resubmission would mean fewer chains (e.g. opening region only)
+- Action: draft RCC extension request + prepare partial FASTA — pending
+
+---
+
 ## June 23, 2026 — Day 16
 
 **NAMD minimization config fixes**
