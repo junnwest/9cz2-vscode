@@ -340,14 +340,14 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
   - v1 (job 51015689, 4 nodes, B=500): completed; no DCD; outputs at `dome_m3_minimized_v1.*`
   - v2_1n (job 51031241, 1 node, B=500): completed 45 min; 11 clashes < 1.5 Å, min dist 1.205 Å; outputs at `dome_m3_minimized_v2_1n.*`
   - **v3 (job 51034782, 2 nodes, B=10)**: completed 25 min; `dome_m3_minimized_v3.dcd` downloaded locally; **clash count pending** ← check at next session
-  - v3_1n (job 51034788, 1 node, B=10): RUNNING at session end (~38 min elapsed)
+  - **v3_1n (job 51034788, 1 node, B=10)**: completed; outputs at `dome_m3_minimized_v3_1n.*` on Midway3; clash count also pending
 - **Python environment**: `~/mda_env` on Midway3 (MDAnalysis 2.7.0, membrane-curvature, matplotlib)
 - **Note**: NAMD parameter files must use `namd/toppar/` (CHARMM-GUI preprocessed), NOT root `toppar/`. Full parameter set from step6.1 required (e.g. ON3 from toppar_water_ions.str needs par_all36_na.prm).
 
 ### Dome-Only MD System — PRIMARY (pending AF2)
 - **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
-- **AF2 status**: ~47h elapsed as of June 23 session end; features.pkl complete (454 MB); no PDB models yet; running on midway3-0318
+- **AF2 status**: ~64h elapsed as of June 24; features.pkl complete (454 MB); no PDB models yet; running on midway3-0318; ~32h remaining on 4-day wall time
 - **Wall time warning**: 4-day wall time was a rough guess — actual inference time for 9,036 residues on 48 CPUs unknown; failure risk is real; cannot be relied upon as primary approach
 - **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
 - **Rationale**: Dome-only is sufficient to study opening mechanism; FtsH excluded to reduce cost
