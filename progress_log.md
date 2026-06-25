@@ -34,7 +34,16 @@
 | 51044708 | bench_2gpu_16pe | 2 | 16 |
 | 51044709 | bench_4gpu_32pe | 4 | 32 |
 
-- All PENDING at session end (competing for single A100 node)
+- 1-GPU jobs completed; 2- and 4-GPU still PENDING at session end
+
+| Job ID | Config | ns/day | Wall time |
+|--------|--------|--------|-----------|
+| 51044706 | 1 GPU + 8 PE | ~3.8 | 44 min |
+| 51044707 | 1 GPU + 16 PE | ~5.6 | 33 min |
+| 51044708 | 2 GPU + 16 PE | — | pending |
+| 51044709 | 4 GPU + 32 PE | — | pending |
+
+- Notable: unlike Dr. Trung's 1M atom system (optimal at 8 PE), 1.7M system benefits from 16 PE (+47%)
 
 **AF2 dome-24 (job 50972223)**
 - ~66h elapsed; still RUNNING; 0 models complete; ~30h remaining on 4-day wall time

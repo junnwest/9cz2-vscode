@@ -363,14 +363,15 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - **Config**: 50,000 steps, `CUDASOAintegrate on` (GPU-resident), `namd/3.0.1-multicore-cuda`
 - **Scripts**: `charmm-gui-9cz2fulldome-8119908655/namd/benchmark_gpu/`
 
-| Job ID | Config | GPUs | PEs | Status |
-|--------|--------|------|-----|--------|
-| 51044706 | bench_1gpu_8pe | 1 | 8 | PENDING |
-| 51044707 | bench_1gpu_16pe | 1 | 16 | PENDING |
-| 51044708 | bench_2gpu_16pe | 2 | 16 | PENDING |
-| 51044709 | bench_4gpu_32pe | 4 | 32 | PENDING |
+| Job ID | Config | GPUs | PEs | ns/day | Status |
+|--------|--------|------|-----|--------|--------|
+| 51044706 | bench_1gpu_8pe | 1 | 8 | ~3.8 | COMPLETE |
+| 51044707 | bench_1gpu_16pe | 1 | 16 | ~5.6 | COMPLETE |
+| 51044708 | bench_2gpu_16pe | 2 | 16 | — | PENDING |
+| 51044709 | bench_4gpu_32pe | 4 | 32 | — | PENDING |
 
 - All competing for single A100 node (midway3-0294); 1h wall time each
+- 16 PE outperforms 8 PE by 47% — larger system (1.7M vs Trung's 1M) better saturates the GPU with more CPU threads
 
 ### Main System — 9cz2 full dome + membrane (equilibration complete)
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`

@@ -154,14 +154,17 @@ NAMD 3.0.1-multicore-cuda, single node, `CUDASOAintegrate on` (GPU-resident mode
 Reference: Dr. Trung (RCC) — 1 GPU + 8 PE = **13 ns/day** for 1M atom STMV system on Beagle3 A100.
 Multi-GPU gave no benefit at 1M atoms; expect similar saturation behavior at 1.7M.
 
-| Job ID | Config | GPUs | PEs | ns/day | Notes |
-|--------|--------|------|-----|--------|-------|
-| 51044706 | bench_1gpu_8pe | 1 | 8 | — | PENDING |
-| 51044707 | bench_1gpu_16pe | 1 | 16 | — | PENDING |
-| 51044708 | bench_2gpu_16pe | 2 | 16 | — | PENDING |
-| 51044709 | bench_4gpu_32pe | 4 | 32 | — | PENDING |
+| Job ID | Config | GPUs | PEs | ns/day | s/step | Notes |
+|--------|--------|------|-----|--------|--------|-------|
+| 51044706 | bench_1gpu_8pe | 1 | 8 | 3.82 | 0.04524 | COMPLETE |
+| 51044707 | bench_1gpu_16pe | 1 | 16 | 5.59 | 0.03092 | COMPLETE |
+| 51044708 | bench_2gpu_16pe | 2 | 16 | — | — | PENDING |
+| 51044709 | bench_4gpu_32pe | 4 | 32 | — | — | PENDING |
 
-Update ns/day once jobs complete: `grep 'TIMING' benchmark_gpu/bench_*_JOBID.log | tail -1`
+Notes:
+- 16 PE is 47% faster than 8 PE — larger system (1.7M atoms) better saturates GPU with more CPU threads
+- Dr. Trung's reference: 1 GPU + 8 PE = 13 ns/day for 1M atoms; our 1.7M system is ~3.4× slower at 8 PE (expected)
+- Update 2-GPU and 4-GPU rows once jobs complete
 
 ---
 
