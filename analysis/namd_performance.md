@@ -11,7 +11,7 @@ Speed formula: `ns/day = 86400 / WallClock_seconds` (per 500,000-step = 1 ns run
 |--------|-------------|-------|--------|
 | **control** | Membrane-only (DPPE/POPG/DOPG/LOACL1/TLCL1 + water/ions, no protein) | 632,689 | charmm-gui-7628525516 |
 | **no-dome** | FtsH embedded in membrane, HflK/C dome removed | < 632,689 (estimated ~550k) | namd_caslake / namd |
-| **full 9cz2** | Full dome + FtsH + membrane (main system) | TBD — CHARMM-GUI 8119908655 building | — |
+| **full 9cz2** | Full dome + FtsH + membrane (main system) | 1,733,042 | charmm-gui-9cz2fulldome-8119908655 |
 
 Note: the no-dome system uses ~6,028 MB memory vs control ~6,775 MB → confirms no-dome is smaller despite having protein. Protein systems run slower per atom due to complex bonded interactions and harder load balancing.
 
@@ -143,6 +143,44 @@ Full system (all 36 chains + membrane) will be ~2–4× larger than control.
 Speed scales roughly as 1/N_atoms for fixed node count.
 If full system is ~1.5M atoms (~2.4× control): expect **~1.0–1.5 ns/day at 5 nodes**.
 Will update once step7_1 timing is available for that system.
+
+---
+
+## GPU Benchmark — Full 9cz2 System (1,733,042 atoms, Midway3 A100)
+
+NAMD 3.0.1-multicore-cuda, single node, `CUDASOAintegrate on` (GPU-resident mode).
+50,000 steps (0.1 ns) from step6.6 restart. Scripts at `benchmark_gpu/` in namd dir.
+
+Reference: Dr. Trung (RCC) — 1 GPU + 8 PE = **13 ns/day** for 1M atom STMV system on Beagle3 A100.
+Multi-GPU gave no benefit at 1M atoms; expect similar saturation behavior at 1.7M.
+
+| Job ID | Config | GPUs | PEs | ns/day | s/step | Notes |
+|--------|--------|------|-----|--------|--------|-------|
+| 51044706 | bench_1gpu_8pe | 1 | 8 | 3.82 | 0.04524 | COMPLETE |
+| 51044707 | bench_1gpu_16pe | 1 | 16 | 5.59 | 0.03092 | COMPLETE |
+| 51044708 | bench_2gpu_16pe | 2 | 16 | — | — | PENDING |
+| 51044709 | bench_4gpu_32pe | 4 | 32 | — | — | PENDING |
+
+Notes:
+- 16 PE is 47% faster than 8 PE — larger system (1.7M atoms) better saturates GPU with more CPU threads
+- Dr. Trung's reference: 1 GPU + 8 PE = 13 ns/day for 1M atoms; our 1.7M system is ~3.4× slower at 8 PE (expected)
+- Update 2-GPU and 4-GPU rows once jobs complete
+
+---
+
+## Minimization Benchmarks — dome_m3 (1,452,343 atoms, water only)
+
+10,000-step conjugate gradient minimization. NAMD 2.14 MPI, caslake partition.
+
+| Job | Nodes | CPUs | WallClock | Restraint B | Notes |
+|-----|-------|------|-----------|-------------|-------|
+| 51015689 | 4 | 192 | 919s (15 min) | 500 | v1; no DCD output |
+| 51031241 | 1 | 48 | 2708s (45 min) | 500 | v2_1n; 11 clashes < 1.5 Å post-min |
+| 51034782 | 2 | 96 | 1507s (25 min) | 10 | v3; clash count pending |
+| 51034788 | 1 | 48 | ~45 min (est) | 10 | v3_1n; running at session end |
+
+B=500 was wrong (freezes dome atoms); B=10 is Dr. Haddadian's recommended restraint strength.
+Scaling is near-linear: 4 nodes ≈ 3× faster than 1 node.
 
 ---
 

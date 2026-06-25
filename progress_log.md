@@ -7,6 +7,98 @@
 
 ---
 
+## June 24, 2026 — Day 17
+
+**Clash analysis on dome_m3_minimized_v3.dcd (final frame)**
+- 12 flagged contacts < 1.5 Å — all are ASP356 N ↔ LEU355 C on each of the 12 HflK chains
+- These are peptide bond geometry at the 355|356 grafting junction (~1.3–1.4 Å = correct bond length)
+- Not real steric clashes — M3 is clean against all dome residues
+- Structure is ready for CHARMM-GUI
+
+**PDB extraction from minimized DCD**
+- Extracted protein-only PDB from final frame via VMD: `dome_m3_minimized_v3_protein.pdb`
+- Discovered `dome_m3_rotated.pdb` input included FtsH (full complex, not dome-only); segnames 0P2–9P2, YP1, ZP1 present
+- Created dome-only version by filtering FtsH segnames: `dome_m3_minimized_v3_dome.pdb` (126,696 atoms, HflK + HflC only)
+- Note: VMD hex atom numbering (>99,999 atoms) present in both PDBs — may need renumbering before CHARMM-GUI
+
+**GPU benchmark jobs submitted (Midway3 gpu partition, A100)**
+- Background: Dr. Trung (RCC) reported 1 GPU + 8 PE = 13 ns/day for 1M atom system on Beagle3 A100; multi-GPU gives no benefit at this scale
+- Submitted 4 benchmark jobs on Midway3 A100 node (midway3-0294) using NAMD 3.0.1-multicore-cuda
+- Config: 50,000 steps (0.1 ns) from step6.6 equilibration restart of main 9cz2 system (1,733,042 atoms)
+- `CUDASOAintegrate on` (GPU-resident mode); if RATTLE errors occur, will disable
+
+| Job ID | Config | GPUs | PEs |
+|--------|--------|------|-----|
+| 51044706 | bench_1gpu_8pe | 1 | 8 |
+| 51044707 | bench_1gpu_16pe | 1 | 16 |
+| 51044708 | bench_2gpu_16pe | 2 | 16 |
+| 51044709 | bench_4gpu_32pe | 4 | 32 |
+
+- 1-GPU jobs completed; 2- and 4-GPU still PENDING at session end
+
+| Job ID | Config | ns/day | Wall time |
+|--------|--------|--------|-----------|
+| 51044706 | 1 GPU + 8 PE | ~3.8 | 44 min |
+| 51044707 | 1 GPU + 16 PE | ~5.6 | 33 min |
+| 51044708 | 2 GPU + 16 PE | — | pending |
+| 51044709 | 4 GPU + 32 PE | — | pending |
+
+- Notable: unlike Dr. Trung's 1M atom system (optimal at 8 PE), 1.7M system benefits from 16 PE (+47%)
+
+**AF2 dome-24 (job 50972223)**
+- ~66h elapsed; still RUNNING; 0 models complete; ~30h remaining on 4-day wall time
+- Dr. Haddadian email: suggested extending wall time via RCC + resubmitting a partial system
+- Note: current job is already dome-only (no FtsH); partial resubmission would mean fewer chains (e.g. opening region only)
+- Action: draft RCC extension request + prepare partial FASTA — pending
+
+---
+
+## June 23, 2026 — Day 16
+
+**NAMD minimization config fixes**
+- Added missing output controls: `dcdfreq 100`, `restartfreq 500`, `XSTFreq 100`, `outputEnergies 40`
+- Fixed parameters: `stepspercycle 20→8`, `nonbondedFreq 1→2`, added `fullElectFrequency 4`
+- Previous run (v1, job 51015689) had no DCD; outputs renamed to `dome_m3_minimized_v1.*`
+
+**Minimization v2 — B=500 restraints (wrong)**
+- Submitted 2-node (51030625, later cancelled) and 1-node (51031241, completed 45 min / 2708s)
+- Clash check on final frame: 11 clashes < 1.5 Å, min distance 1.205 Å — M3 stuck against frozen dome
+- Root cause: B=500 is far too stiff (essentially freezes dome solid); Dr. Haddadian's recommendation is B=10
+
+**Minimization v3 — B=10 restraints (correct)**
+- Updated `04_make_restraints.py`: B=500 → B=10; regenerated `restraints.pdb` on Midway3
+- Output renamed to `dome_m3_minimized_v3`
+- 2-node (51034782): completed 25 min / 1507s — `dome_m3_minimized_v3.dcd` downloaded locally
+- 1-node (51034788): RUNNING at session end (~38 min elapsed, expected ~45 min)
+- v3 clash count not yet checked — pending
+
+**Minimization scaling benchmark (water-only solvated system, 1,452,343 atoms)**
+
+| Nodes | CPUs | WallClock | Restraint |
+|-------|------|-----------|-----------|
+| 4 (v1) | 192 | 919s (15 min) | B=500 |
+| 2 (v3) | 96 | 1507s (25 min) | B=10 |
+| 1 (v2) | 48 | 2708s (45 min) | B=500 |
+
+**Lipid proximity analysis — no-dome FtsH**
+- Ran `lipid-prox-FtsH-namd.tcl` (adapted) on `namd_caslake/` no-dome system: step7_production + step7_2–11 (98 frames, ~10 ns)
+- FtsH TM selection: segnames PROV/W/X/Y/Z + PRAA-PRAG, resid 1–22 and 97–120; cutoff 6 Å
+- Job 51033869 completed; node failure caused one requeue (output wiped and rerun)
+- Added `--no-requeue` to v2 job (51035563, still running); both write to distinct output files
+- Output downloaded locally: `analysis/lipid_count_FtsH_nodome_namd.dat`
+
+**AF2 dome-24 (job 50972223)**
+- ~47h elapsed at session end; 0 models complete; 748 GB RAM stable, ~755% CPU
+- stderr silent since 19:12 CDT June 21 (normal — AF2 logs nothing during neural network inference)
+- 4-day wall time was a rough guess; completion time genuinely unknown; failure risk is real
+- Cannot rely on this job — M3 grafting + minimization approach must work independently
+
+**GPU scaling email**
+- Dr. Zand response: single A100 node estimated 60–80 ns/day for 1.7M atom system; referred to Dr. Trung (ndtrung@uchicago.edu) for deeper expertise
+- Drafted follow-up email to Dr. Trung citing Zand referral
+
+---
+
 ## June 22, 2026 — Day 15
 
 **M3 tail grafting — AF3 monomer approach**
