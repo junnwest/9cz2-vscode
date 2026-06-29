@@ -251,7 +251,7 @@ All AlphaFold scripts at `/scratch/midway3/junseo/26summer-research/alphafold/9c
   - 50698644 — 750 GB → OUT_OF_MEMORY (Jun 12)
   - 50737753 — 1.5 TB (0318) → ran model_1 ~29.5h, **manually cancelled** Jun 18 (not OOM, not finished)
   - 50894863 — 750 GB (0317) → OUT_OF_MEMORY Jun 19, exit 137 (this script lacked `--nodelist` → wrong node)
-- **Walltime (resolved June 22)**: prior 1.5 TB run was >29.5h and unfinished, and **AF2 inference does NOT checkpoint** → a timeout = total loss. After the RCC request, job 50972223 now runs under a **4-day wall time** (no longer at the 36h `bigmem` cap) — not at risk as of June 22 (26h+ elapsed, features.pkl complete, no PDB models yet).
+- **Walltime (resolved June 22; extended June 25)**: prior 1.5 TB run was >29.5h and unfinished, and **AF2 inference does NOT checkpoint** → a timeout = total loss. RCC (Dossay Oryspayev) first extended the TimeLimit in place to **4 days** (June 22), then to **14 days** (June 25) on request — hard kill now **~July 5 19:03**. As of June 28 the job is at **~152h elapsed**, healthy (PID 2108493, 806% CPU, 748 GB RSS), monitor `0/1`, only features.pkl written — **still no PDB model**. Runtime now exceeds the optimistic LLM estimate (~125h), approaching mid estimates (~160–200h); pessimistic O(N³) estimate ~380h. Self-imposed decision point: cancel if no output by ~July 1 (day 10).
 - **Fallback (ready)**: `hflk_af2_m3rotated.pdb` + `replace_hflk.py` if dome-24 fails.
 - **Post-run plan**: Use best-ranked model output directly as input to CHARMM-GUI for dome-only membrane system; discard HflK M1/M2 (1–78) predictions as TM region is unreliable without membrane context
 
@@ -358,7 +358,7 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 24, 2026 — Day 17)
+## Current Systems (as of June 29, 2026 — Day 22)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
@@ -381,10 +381,11 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 ### Dome-Only MD System — PRIMARY (pending AF2)
 - **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
-- **AF2 status**: ~66h elapsed as of June 24 afternoon; features.pkl complete (454 MB); no PDB models yet; running on midway3-0318; ~30h remaining on 4-day wall time
-- **Wall time warning**: 4-day wall time was a rough guess; failure risk is real
-- **Dr. Haddadian suggestion (June 24)**: extend wall time via RCC + resubmit partial system (opening region only, fewer chains)
-- **Pending actions**: (1) email RCC to extend job 50972223; (2) prepare partial FASTA for resubmission
+- **AF2 status (June 28)**: **~152h elapsed**; features.pkl complete (454 MB); **still no PDB models**; running on midway3-0318; wall time **extended to 14 days** (kill ~July 5 19:03)
+- **RCC outage (June 29)**: Midway3 login unreachable cluster-wide (port 22 refused → timed out); no maintenance notice on RCC homepage; pattern consistent with a node taken offline (possible scheduled maintenance). **Risk**: RCC maintenance typically drains running jobs → would lose the un-checkpointed 152h run. Pending: check uchicago email for RCC maintenance announcement; verify job 50972223 survival when cluster returns.
+- **Wall time**: extended 4d → 14d (June 25) by RCC; self-imposed cancel if no output by ~July 1 (day 10)
+- **Dr. Haddadian suggestion (June 24)**: resubmit partial system (opening region only, fewer chains) — much smaller than 9,036 residues, finishes far faster
+- **Pending actions**: (1) confirm job survived any June 29 outage/maintenance; (2) prepare partial FASTA for resubmission as the smarter AF2 path
 - **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
 - **Fallback**: `dome_m3_minimized_v3_dome.pdb` — M3-grafted dome, minimized, clash-free; ready for CHARMM-GUI if AF2 fails
 

@@ -44,7 +44,7 @@ This directory tracks metadata and notes about each system — not the files the
 - **Goal**: Best-ranked AF2 24-chain dome model → trim HflK 1–78 → CHARMM-GUI membrane build → equilibration → production. Dome-only (no FtsH) is sufficient to study the opening mechanism.
 - **AF2 dome-24 (9,036 residues, 24 chains)**: full-context prediction on bigmem CPU
   - Footprint: RSS steady **~589 GB** → requires the **1.5 TB** node (`midway3-0318`); the 768 GB node OOMs
-  - **Active job: 50972223** (`af2_dome24_m1_1536g`) — RUNNING on midway3-0318 since June 21 19:03, model_1_multimer_v3 only, precomputed MSAs, 36h walltime
+  - **Active job: 50972223** (`af2_dome24_m1_1536g`) — RUNNING on midway3-0318 since June 21 19:03, model_1_multimer_v3 only, precomputed MSAs; wall time extended 4d → **14 days** (RCC, June 25); ~152h elapsed as of June 28, still no model output
   - Prior failures: 50698644 (750 GB OOM), 50737753 (1.5 TB, manually cancelled at ~29.5h), 50894863 (750 GB OOM — missing `--nodelist`)
   - Script: `job_dome24_model1_1536g.sh` (= model_1 script pinned to 1.5 TB node)
   - **Risk**: 36h `bigmem` QOS cap may be too short; AF2 has no checkpoint (timeout = total loss). RCC asked to extend job TimeLimit in place or grant `bigmem-pr+` QOS (4-day).

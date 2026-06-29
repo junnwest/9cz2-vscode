@@ -7,6 +7,35 @@
 
 ---
 
+## June 25–29, 2026 — Days 18–22
+
+**AF2 dome-24 (job 50972223) — wall time extended to 14 days; still no model**
+- RCC (Dossay Oryspayev) extended the job's TimeLimit in place: 4 days → **14 days** on June 25 request (hard kill now ~July 5 19:03 CDT)
+- As of June 28: **~152h elapsed**, process healthy (PID 2108493, 806% CPU = ~8 cores, 748 GB RSS, no restart), monitor `0/1`, only `features.pkl` written — **no PDB model yet**
+- Runtime now exceeds the optimistic estimate (~125h) and is approaching the mid estimates (~160–200h); pessimistic O(N³)×full-recycle estimate is ~380h
+- Self-imposed decision point: cancel rather than ride to July 5 if no output by ~July 1 (day 10)
+
+**Runtime prediction exercise**
+- Built a research prompt (system size, partition, per-job sacct timing for all past AF2 runs) to estimate single-model CPU inference time; fed to three LLMs → estimates 125h / 160h / 380h total
+- Key finding from live process check: AF2-on-CPU uses only ~8 of 48 allocated cores (806% CPU) — memory-bandwidth/XLA bound; more cores won't help much (RCC guidance: >8 cores wasted for AF2)
+- Consensus: won't finish before the original 4-day wall; extension was the only way to save the sunk compute. Asked RCC for 14 days (granted)
+
+**Midway3 outage (June 29)**
+- Login node unreachable cluster-wide: `ssh midway3` → "Connection refused", minutes later "Connection timed out" (port 22 refused/closed from routed path too)
+- No maintenance notice on RCC homepage; refused→timed-out shift is consistent with a node taken fully offline (possible scheduled maintenance)
+- **Risk**: RCC maintenance typically drains running jobs → would lose the un-checkpointed 152h AF2 run. Pending: check uchicago email for RCC announcement; verify job survival when cluster returns
+
+**GPU benchmarks (full 9cz2, 1.7M atoms) — 2-GPU complete**
+- 2 GPU + 16 PE (job 51044708) completed June 25: **7.40 ns/day** (0.0233 s/step) — only **1.32×** over 1 GPU + 16 PE (5.59) → strong diminishing returns from the 2nd GPU (consistent with Dr. Trung)
+- 4 GPU + 32 PE (51044709) still queued (est. start ~June 26, now affected by the outage)
+- Benchmark doc tables (namd_performance.md / CLAUDE.md) to be finalized once the 4-GPU job completes — holding per decision to record both together
+
+**Lipid proximity plot**
+- Generated `analysis/lipid_proximity_FtsH_nodome.png` from `lipid_count_FtsH_nodome_namd.dat` (98 frames, ~10 ns, no-dome FtsH) via `analysis/plot_lipid_proximity.py`
+- All five species flat over the window; counts track bulk membrane composition (DPPE ~110, POPG/DOPG ~20–26, LOACL1/TLCL1 ~4–5) — no obvious enrichment/depletion in this short run
+
+---
+
 ## June 24, 2026 — Day 17
 
 **Clash analysis on dome_m3_minimized_v3.dcd (final frame)**
