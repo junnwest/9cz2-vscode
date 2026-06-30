@@ -23,12 +23,17 @@
 **Midway3 outage (June 29)**
 - Login node unreachable cluster-wide: `ssh midway3` → "Connection refused", minutes later "Connection timed out" (port 22 refused/closed from routed path too)
 - No maintenance notice on RCC homepage; refused→timed-out shift is consistent with a node taken fully offline (possible scheduled maintenance)
-- **Risk**: RCC maintenance typically drains running jobs → would lose the un-checkpointed 152h AF2 run. Pending: check uchicago email for RCC announcement; verify job survival when cluster returns
+- **Resolved (June 29 later)**: cluster came back; job 50972223 confirmed RUNNING at ~193h elapsed — survived the outage; still no PDB output
 
 **GPU benchmarks (full 9cz2, 1.7M atoms) — 2-GPU complete**
 - 2 GPU + 16 PE (job 51044708) completed June 25: **7.40 ns/day** (0.0233 s/step) — only **1.32×** over 1 GPU + 16 PE (5.59) → strong diminishing returns from the 2nd GPU (consistent with Dr. Trung)
 - 4 GPU + 32 PE (51044709) still queued (est. start ~June 26, now affected by the outage)
 - Benchmark doc tables (namd_performance.md / CLAUDE.md) to be finalized once the 4-GPU job completes — holding per decision to record both together
+
+**Structure asymmetry email (June 29)**
+- Rajiv noted chains A/M/S M3 tails are intertwined in the structure
+- Cause: per-chain independent rotation search assigned different angles to each M3 tail → asymmetric orientations globally
+- Not a concern: M3 (pLDDT ~44) is intrinsically disordered; initial placement doesn't matter for MD
 
 **Lipid proximity plot**
 - Generated `analysis/lipid_proximity_FtsH_nodome.png` from `lipid_count_FtsH_nodome_namd.dat` (98 frames, ~10 ns, no-dome FtsH) via `analysis/plot_lipid_proximity.py`

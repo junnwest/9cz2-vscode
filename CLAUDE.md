@@ -381,11 +381,12 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 ### Dome-Only MD System — PRIMARY (pending AF2)
 - **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
-- **AF2 status (June 28)**: **~152h elapsed**; features.pkl complete (454 MB); **still no PDB models**; running on midway3-0318; wall time **extended to 14 days** (kill ~July 5 19:03)
-- **RCC outage (June 29)**: Midway3 login unreachable cluster-wide (port 22 refused → timed out); no maintenance notice on RCC homepage; pattern consistent with a node taken offline (possible scheduled maintenance). **Risk**: RCC maintenance typically drains running jobs → would lose the un-checkpointed 152h run. Pending: check uchicago email for RCC maintenance announcement; verify job 50972223 survival when cluster returns.
+- **AF2 status (June 29)**: **~193h elapsed**; features.pkl complete (454 MB); **still no PDB models**; running on midway3-0318; wall time **extended to 14 days** (kill ~July 5 19:03); ~142h remaining
+- **RCC outage (June 29)**: Midway3 was unreachable (port 22 refused → timed out); **job 50972223 survived** — confirmed RUNNING at 8d 01h elapsed after cluster came back
 - **Wall time**: extended 4d → 14d (June 25) by RCC; self-imposed cancel if no output by ~July 1 (day 10)
 - **Dr. Haddadian suggestion (June 24)**: resubmit partial system (opening region only, fewer chains) — much smaller than 9,036 residues, finishes far faster
-- **Pending actions**: (1) confirm job survived any June 29 outage/maintenance; (2) prepare partial FASTA for resubmission as the smarter AF2 path
+- **Pending actions**: prepare partial FASTA for resubmission as the smarter AF2 path
+- **Structure asymmetry note (June 29, email from Rajiv)**: Rajiv noted chains A/M/S M3 tails are intertwined. Cause: per-chain independent rotation search (different angle per chain to avoid clashes) → asymmetric M3 orientations. Not a problem — M3 is intrinsically disordered (pLDDT ~44) and will sample many conformations during MD.
 - **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
 - **Fallback**: `dome_m3_minimized_v3_dome.pdb` — M3-grafted dome, minimized, clash-free; ready for CHARMM-GUI if AF2 fails
 
