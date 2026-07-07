@@ -7,6 +7,52 @@
 
 ---
 
+## July 2, 2026 — Days 23–25
+
+**AF2 dome-24 (job 50972223) — still running, past self-imposed cancel date**
+- At session start: **10d 16h elapsed**, still RUNNING on midway3-0318; only `features.pkl` + `msas/` in output — no PDB models
+- Past the self-imposed July 1 (day 10) cancel point; hard kill ~July 5 19:03 CDT (~3 days remaining)
+- Decision: let it ride to wall time (no cost; remote work week anyway)
+
+**AF3 server — first result: tails entangled with dome**
+- First server job (hflk_m3_dome_server: HflK 319–419 × 12 + HflC 270–334 × 12, 1,992 tokens) completed
+- Result: M3 tails predicted inside/entangled with dome interior — not physically meaningful
+- Root cause: query too short → only 37-residue helical anchor per chain; model had no directional context to send M3 downward; dome interior appeared as open space
+- Resubmitted with seed 2 → "Model inference failed" (transient server error)
+
+**AF3 server — two new jobs with extended queries**
+- Both use "Use PDB templates up to 01/01/2026" (9CZ2 found automatically); submitted July 2
+
+| Job | Query | Tokens | Rationale |
+|-----|-------|--------|-----------|
+| server_opt1_extended | HflK 200–419 × 12 + HflC 200–334 × 12 | 4,260 | Longer helical stalk gives directional context for M3 |
+| server_opt2_halfdome | HflK 79–419 × 6 + HflC 1–334 × 6 | 4,050 | Half dome, full sequences; richer per-chain context |
+
+- JSONs: `server_opt1_extended.json`, `server_opt2_halfdome.json`
+- HflK starts at 79 (not 1) in opt2 to avoid confusing AF3 with TM region lacking membrane context
+
+**AF3 Midway3 (job 51362125) — failed; fixed and resubmitted**
+- Crash at data pipeline stage: `ValueError: Protein chain A has unpaired MSA, paired MSA, or templates set only partially`
+- Root cause: `hflk_m3_dome.json` had `templates` field set (custom mmCIF for HflK 319–355 and HflC 291–329) but no `unpairedMsa`/`pairedMsa` fields — AF3 requires all-or-nothing
+- Fix: removed `templates` from both protein entities; pipeline now searches MSA + templates automatically (finds 9CZ2 via date cutoff)
+- Resubmitted as **job 51372128** (gpu partition, 2× A100, 24h); input: HflK 319–419 × 12 + HflC full × 12 = 5,220 tokens
+
+**AF3 template note**
+- Custom mmCIF template upload on AF3 server required a mapping file (JSON referencing CIF filenames); format figured out but abandoned in favor of auto PDB template search — 9CZ2 is in PDB and AF3 finds it automatically
+- AF3 local requires MSA+templates all-or-nothing (unlike AF2 which always runs its own pipeline); server abstracts this away entirely
+
+**Midway3 outage (July 1)**
+- Brief: `ssh midway3` → "Connection refused"; resolved same day; job 50972223 unaffected
+
+**Main system equilibration — confirmed complete**
+- step6.1–6.6 DCDs all present on Midway3; step6.6 restart files (`.coor`, `.vel`, `.xsc`) intact
+- Ready to start production (step7) on Midway3
+
+**Working from home (July 2)**
+- MacBook non-functional; working via PC; UPS delivery day
+
+---
+
 ## June 25–29, 2026 — Days 18–22
 
 **AF2 dome-24 (job 50972223) — wall time extended to 14 days; still no model**

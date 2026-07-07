@@ -358,7 +358,7 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of June 29, 2026 — Day 22)
+## Current Systems (as of July 2, 2026 — Day 25)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
@@ -381,16 +381,36 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 ### Dome-Only MD System — PRIMARY (pending AF2)
 - **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
 - **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
-- **AF2 status (June 29)**: **~193h elapsed**; features.pkl complete (454 MB); **still no PDB models**; running on midway3-0318; wall time **extended to 14 days** (kill ~July 5 19:03); ~142h remaining
-- **RCC outage (June 29)**: Midway3 was unreachable (port 22 refused → timed out); **job 50972223 survived** — confirmed RUNNING at 8d 01h elapsed after cluster came back
-- **Wall time**: extended 4d → 14d (June 25) by RCC; self-imposed cancel if no output by ~July 1 (day 10)
-- **Dr. Haddadian suggestion (June 24)**: resubmit partial system (opening region only, fewer chains) — much smaller than 9,036 residues, finishes far faster
-- **Pending actions**: prepare partial FASTA for resubmission as the smarter AF2 path
+- **AF2 status (July 2)**: **~256h elapsed** (10d 16h); features.pkl complete (454 MB); **still no PDB models**; running on midway3-0318; hard kill ~July 5 19:03; decided to let ride to wall time
+- **RCC outage (June 29)**: Midway3 unreachable briefly; job survived
+- **Wall time**: extended 4d → 14d (June 25) by RCC; self-imposed July 1 cancel date passed with no output; letting ride to hard kill
 - **Structure asymmetry note (June 29, email from Rajiv)**: Rajiv noted chains A/M/S M3 tails are intertwined. Cause: per-chain independent rotation search (different angle per chain to avoid clashes) → asymmetric M3 orientations. Not a problem — M3 is intrinsically disordered (pLDDT ~44) and will sample many conformations during MD.
 - **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
 - **Fallback**: `dome_m3_minimized_v3_dome.pdb` — M3-grafted dome, minimized, clash-free; ready for CHARMM-GUI if AF2 fails
 
-### GPU Benchmark — Midway3 A100 (PENDING)
+### AF3 M3 Prediction — Active (July 2, 2026)
+Multiple parallel approaches running to predict HflK M3 (356–419) in dome context:
+
+**Midway3 AF3 (job 51372128, RUNNING)**
+- Input: `hflk_m3_dome.json` — HflK 319–419 × 12 + HflC full (334 aa) × 12; 5,220 tokens
+- Pipeline: full MSA search + template search (finds 9CZ2 auto); 2× A100, 24h
+- Previous job 51362125 failed: `templates` specified without MSA fields → all-or-nothing rule; fixed by removing templates
+
+**AF3 server — opt1 (SUBMITTED July 2)**
+- `server_opt1_extended.json`: HflK 200–419 × 12 + HflC 200–334 × 12; 4,260 tokens
+- Rationale: extended helical stalk (200–355) gives directional context to prevent tails pointing inward
+
+**AF3 server — opt2 (SUBMITTED July 2)**
+- `server_opt2_halfdome.json`: HflK 79–419 × 6 + HflC 1–334 × 6; 4,050 tokens
+- Rationale: half dome with full sequences; richer per-chain context
+
+**AF3 server — first result (FAILED geometrically)**
+- hflk_m3_dome_server (HflK 319–419 × 12 + HflC 270–334 × 12): completed but M3 tails entangled with dome interior
+- Cause: query too short → no directional context; dome interior looked like open space to model
+
+**AF3 local gotcha**: if `templates` set in JSON, must also set `unpairedMsa` + `pairedMsa` (all-or-nothing). Omit all three to let pipeline run freely.
+
+### GPU Benchmark — Midway3 A100 (partial results)
 - **Purpose**: Characterize GPU scaling for 1.7M atom system; informed by Dr. Trung's data (1 GPU + 8 PE = 13 ns/day for 1M atoms on Beagle3 A100; multi-GPU gives no benefit)
 - **System**: main 9cz2 full dome + membrane (1,733,042 atoms), from step6.6 restart
 - **Config**: 50,000 steps, `CUDASOAintegrate on` (GPU-resident), `namd/3.0.1-multicore-cuda`
@@ -400,11 +420,11 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 |--------|--------|------|-----|--------|--------|
 | 51044706 | bench_1gpu_8pe | 1 | 8 | ~3.8 | COMPLETE |
 | 51044707 | bench_1gpu_16pe | 1 | 16 | ~5.6 | COMPLETE |
-| 51044708 | bench_2gpu_16pe | 2 | 16 | — | PENDING |
+| 51044708 | bench_2gpu_16pe | 2 | 16 | ~7.4 | COMPLETE |
 | 51044709 | bench_4gpu_32pe | 4 | 32 | — | PENDING |
 
-- All competing for single A100 node (midway3-0294); 1h wall time each
-- 16 PE outperforms 8 PE by 47% — larger system (1.7M vs Trung's 1M) better saturates the GPU with more CPU threads
+- 2-GPU only 1.32× faster than 1 GPU — strong diminishing returns (consistent with Dr. Trung)
+- 16 PE outperforms 8 PE by 47% — larger system (1.7M vs Trung's 1M) better saturates GPU with more CPU threads
 
 ### Main System — 9cz2 full dome + membrane (equilibration complete)
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`

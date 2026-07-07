@@ -1,0 +1,24 @@
+[
+  {
+    "name": "hflk_m3_opt1_extended",
+    "sequences": [
+      {
+        "proteinChain": {
+          "sequence": "TMDRILTEGRTVIRSDTQRELEETIRPYDMGITLLDVNFQAARPPEEVKAAFDDAIAARENEQQYIREAEAYTNEVQPRANGQAQRILEEARAYKAQTILEAQGEVARFAKLLPEYKAAPEITRERLYIETMEKVLGNTRKVLVNDKGGNLMVLPLDQMLKGGNAPAAKSDNGASNLLRLPPASSSTTSGASNTSSTSQGDIMDQRRANAQRNDYQRQGE",
+          "count": 12
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "ALGIEVVDVRIKQINLPTEVSEAIYNRMRAEREAVARRHRSQGQEEAEKLRATADYEVTRTLAEAERQGRIMRGEGDAEAAKLFADAFSKDPDFYAFIRSLRAYENSFSGNQDVMVMSPDSDFFRYMKTPTSATR",
+          "count": 12
+        }
+      }
+    ],
+    "modelSeeds": [
+      1
+    ],
+    "dialect": "alphafold3",
+    "version": 1
+  }
+]
