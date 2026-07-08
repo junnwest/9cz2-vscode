@@ -7,6 +7,37 @@
 
 ---
 
+## July 7–8, 2026 — Days 26–27
+
+**AF2 dome-24 (job 50972223) — confirmed FAILED, total loss**
+- `sacct` confirms `State=TIMEOUT`, Start 2026-06-21T19:02:58 → End 2026-07-05T19:03:14, Elapsed exactly 14-00:00:16
+- Zero PDB models ever produced (only `features.pkl` + `msas/`); AF2 does not checkpoint mid-model, so the full 14-day bigmem allocation is a total loss
+- Officially abandoned — AF3 `opt1_extended` path (below) is now primary
+
+**AF3 `opt1_extended` — completed, merged, minimized, and compared**
+- Server job completed July 6: HflK 200–419 × 12 + HflC 200–334 × 12, template left unconstrained
+- Checked the actual template CIFs used: AF3 did **not** use 9CZ2 — it templated on **7VHQ/7VHP** (2021 closed/symmetric cryo-EM structure of the same complex) and **8Z5G**, confirmed via `_entry.id` fields in the downloaded template mmCIFs
+- Built two chain-mapping variants merging the predicted 356–419 region onto the existing dome (9CZ2 + HflC 161–190 loop + X/V/W completed chains):
+  - `ic` (interchangeable) — predicted chains reassigned by best geometric fit to each dome position
+  - `op` (order-preserving) — predicted chains kept in AF3's raw output order
+- Solvated and minimized both on Midway3 (jobs 51481766 / 51481765, 10,000 steps each, ~1.456M atoms) — both converged cleanly, zero M3-vs-dome clashes <2.0 Å in either
+- Compared M3 tail CA-displacement during minimization as a proxy for initial fit quality: `ic` overall RMSD 2.19 Å vs `op` 2.28 Å, lower in 10/12 chains → **chose `ic`** as the structure to move forward with
+- Final NAMD potential energy was nearly identical between variants (diluted by the ~1.45M-atom water box — not a useful discriminator)
+- Saved locally: `dome_m3_af3_ic_minimized_final.pdb` (full complex, 36 chains) and `dome_m3_af3_ic_minimized_final_noftsh.pdb` (dome-only, 24 chains, A–X)
+- Deleted other local PDBs to free space (all recoverable from Midway3 or git history): `dome_m3_af3_ic_solv.pdb`, `dome_m3_af3_op_minimized_final.pdb`, `dome_m3_af3_op_solv.pdb`, `dome_m3_rotated.pdb`, `dome_with_m3_grafted.pdb`
+- Sent `dome_m3_af3_ic_minimized_final.pdb` to Dr. Ghanbarpour with full methodology, referencing the June 13 Zoom meeting
+
+**ThinLinc / VMD segfault — root-caused, not yet fully resolved**
+- VMD segfaults on ThinLinc because the default web URL load-balances onto a GPU-less login node (login5), falling back to crashing `llvmpipe` software rendering
+- Tried `sviz` (Midway2-only, doesn't exist on Midway3), then `sinteractive -p gpu -G 1 --account=pi-haddadian` (works, but queue wait)
+- Emailed Dr. Trung and RCC's Dossay Oryspayev; Dossay suggested login3/login4 directly — discovered the **web ThinLinc client can't end an existing session** (only the native client can, via an Options checkbox), so it kept reconnecting to the login5 session regardless of URL
+- Installed VMD natively on this Mac instead (`/Applications/VMD 2.0.0a7-pre2.app`) as the reliable fallback — used it to visually/numerically compare the `ic` vs `op` structures
+
+**New machine note**
+- This session (from `Kenneths-MacBook-Pro.local`) required re-establishing the SSH ControlMaster socket multiple times (1h `ControlPersist` expiring); confirmed the socket only forms when connecting via the `midway3` alias (`ssh midway3`), not the full hostname
+
+---
+
 ## July 2, 2026 — Days 23–25
 
 **AF2 dome-24 (job 50972223) — still running, past self-imposed cancel date**

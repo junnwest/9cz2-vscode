@@ -91,6 +91,23 @@ Key paths on this machine:
 
 ---
 
+#### If hostname is `Kenneths-MacBook-Pro.local` — Personal machine (macOS, set up July 6, 2026)
+
+No vault, no WSL — this machine has real Linux-compatible OpenSSH natively, so it works the same way as the lab Mac.
+
+Key paths on this machine:
+| Resource | Path |
+|----------|------|
+| Repo | `/Users/junnwest/Desktop/26-summer-research/9cz2-vscode` |
+| SSH config | `~/.ssh/config` — has a `Host midway3` entry (`HostName midway3.rcc.uchicago.edu`, `User junseo`, `ControlMaster auto`, `ControlPath ~/.ssh/cm-%r@%h:%p`, `ControlPersist 1h`) |
+| GitHub SSH | already working (`~/.ssh/id_ed25519`, `Host github.com` entry); no deploy key needed on this machine |
+| git binary | system git at `/usr/bin/git` (no CLT/Xcode license issue here) |
+| VSCode Remote-SSH | extension not yet installed — install `ms-vscode-remote.remote-ssh` from the Extensions panel (⇧⌘X); the `code` CLI is not on PATH here |
+
+Session connection flow is the same as the lab Mac: user runs `ssh midway3` in a terminal to open the ControlMaster socket (password + DUO), then Claude's Bash tool reuses that socket via plain `ssh midway3 "<command>"`.
+
+---
+
 ### Step 1 — Open the SSH ControlMaster socket (user action required)
 
 The Bash tool reaches Midway3 by tunneling through an SSH ControlMaster socket on the local machine. This socket expires after 1 hour of inactivity. Without it, every `ssh midway3` command will fail with an authentication error.
@@ -358,7 +375,7 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of July 2, 2026 — Day 25)
+## Current Systems (as of July 8, 2026 — Day 26–27)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
@@ -378,37 +395,33 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - **Python environment**: `~/mda_env` on Midway3 (MDAnalysis 2.7.0, membrane-curvature, matplotlib)
 - **Note**: NAMD parameter files must use `namd/toppar/` (CHARMM-GUI preprocessed), NOT root `toppar/`. Full parameter set from step6.1 required (e.g. ON3 from toppar_water_ions.str needs par_all36_na.prm).
 
-### Dome-Only MD System — PRIMARY (pending AF2)
-- **Input**: Best-ranked AF2 dome-24 output model (job **50972223**, RUNNING on Midway3 bigmem)
-- **Chains**: 24 HflK/HflC, no FtsH; HflK resid 1–78 trimmed before CHARMM-GUI
-- **AF2 status (July 2)**: **~256h elapsed** (10d 16h); features.pkl complete (454 MB); **still no PDB models**; running on midway3-0318; hard kill ~July 5 19:03; decided to let ride to wall time
-- **RCC outage (June 29)**: Midway3 unreachable briefly; job survived
-- **Wall time**: extended 4d → 14d (June 25) by RCC; self-imposed July 1 cancel date passed with no output; letting ride to hard kill
-- **Structure asymmetry note (June 29, email from Rajiv)**: Rajiv noted chains A/M/S M3 tails are intertwined. Cause: per-chain independent rotation search (different angle per chain to avoid clashes) → asymmetric M3 orientations. Not a problem — M3 is intrinsically disordered (pLDDT ~44) and will sample many conformations during MD.
-- **Pipeline**: AF2 output → trim HflK 1–78 → verify M3 inward orientation → CHARMM-GUI membrane build → equilibration → production
-- **Fallback**: `dome_m3_minimized_v3_dome.pdb` — M3-grafted dome, minimized, clash-free; ready for CHARMM-GUI if AF2 fails
+### AF2 dome-24 — FAILED (job 50972223, TIMEOUT, no model ever produced)
+- **Final status**: `sacct` confirms `State=TIMEOUT`, `ExitCode=0:0`, Start 2026-06-21T19:02:58 → End 2026-07-05T19:03:14, Elapsed exactly **14-00:00:16**
+- Only `features.pkl` (454 MB) + `msas/` ever written; zero PDB models (unrelaxed/ranked) in `af2_dome24_output/dome_24chain_input/` — total loss of the full 14-day bigmem allocation, as feared (AF2 inference does not checkpoint mid-model)
+- stderr shows it began `model_1_multimer_v3_pred_0` inference on June 21 19:12 CDT and never finished a single model in 14 days
+- **Superseded** — the AF3 `opt1_extended` → `ic` minimization pipeline below is now the primary path; AF2 dome-24 is a dead end, not being retried
 
-### AF3 M3 Prediction — Active (July 2, 2026)
-Multiple parallel approaches running to predict HflK M3 (356–419) in dome context:
+### AF3 M3 Prediction — opt1_extended COMPLETE; ic/op minimizations COMPLETE (July 6–7, 2026)
+- **Input** (`server_opt1_extended.json`): HflK 200–419 × 12 + HflC 200–334 × 12 (4,260 tokens); extended into the resolved helical stalk (200–355) to give AF3 directional context so the disordered 356–419 tail wouldn't fold into the dome interior (as happened in an earlier, shorter-query attempt)
+- **Template**: left unconstrained (`useStructureTemplate: true`, `maxTemplateDate: 2026-01-01`, no forced 9CZ2). Result: AF3 did **not** pick up 9CZ2 — it templated on **7VHQ/7VHP** (the group's earlier 2021 closed, symmetric cryo-EM structure of the same FtsH-HflK/C complex) and **8Z5G** (related SPFH complex). Confirmed via `_entry.id` in the downloaded template CIFs.
+- **Output**: `fold_hflk_m3_opt1_extended/` (5 models, local, untracked) — completed July 6
+- **Chain mapping problem**: AF3 predicted 12 sequence-identical HflK copies with no inherent correspondence to physical dome chain positions (A, C, E, G...). Two mapping strategies were built and minimized in parallel on Midway3:
+  - `minimize_m3_af3_ic/` — **"interchangeable"**: predicted chains reassigned to whichever dome position they best geometrically fit (job 51481766, 10,000-step NAMD minimization, COMPLETE)
+  - `minimize_m3_af3_op/` — **"order-preserving"**: predicted chains kept in AF3's raw output order (job 51481765, COMPLETE)
+  - Both solvated (~1.456M atoms), both converged cleanly — **zero M3-vs-dome clashes <2.0 Å** in either variant after minimization (checked directly on final frames, not just log convergence)
+- **Chose `ic`**: M3 tail CA-displacement during minimization (a proxy for how good the initial chain assignment was) is lower for `ic` in 10 of 12 chains — overall RMSD 2.19 Å (ic) vs 2.28 Å (op). Final NAMD potential energy was nearly identical between the two (diluted by the huge water box, not a useful discriminator).
+- **Local files kept** (root of repo, untracked):
+  - `dome_m3_af3_ic_minimized_final.pdb` — full complex, 36 chains (HflK/HflC dome + FtsH), 11 MB
+  - `dome_m3_af3_ic_minimized_final_noftsh.pdb` — dome-only, 24 chains (A–X), FtsH stripped, 10 MB
+- **Sent to Dr. Ghanbarpour** (July 7–8) with full methodology, including the 9CZ2-vs-7VHQ/7VHP template finding
+- **Deleted locally for storage** (still recoverable — `op`/`_solv` variants live on Midway3 under `minimize_m3_af3_ic/` and `minimize_m3_af3_op/`; `dome_m3_rotated.pdb`/`dome_with_m3_grafted.pdb` are in git history): `dome_m3_af3_ic_solv.pdb`, `dome_m3_af3_op_minimized_final.pdb`, `dome_m3_af3_op_solv.pdb`, `dome_m3_rotated.pdb`, `dome_with_m3_grafted.pdb`
+- **Next step**: use `dome_m3_af3_ic_minimized_final_noftsh.pdb` as CHARMM-GUI input for the dome-only membrane system (HflK resid 1–78 already excluded from the AF3 query, so no further trimming needed)
 
-**Midway3 AF3 (job 51372128, RUNNING)**
-- Input: `hflk_m3_dome.json` — HflK 319–419 × 12 + HflC full (334 aa) × 12; 5,220 tokens
-- Pipeline: full MSA search + template search (finds 9CZ2 auto); 2× A100, 24h
-- Previous job 51362125 failed: `templates` specified without MSA fields → all-or-nothing rule; fixed by removing templates
-
-**AF3 server — opt1 (SUBMITTED July 2)**
-- `server_opt1_extended.json`: HflK 200–419 × 12 + HflC 200–334 × 12; 4,260 tokens
-- Rationale: extended helical stalk (200–355) gives directional context to prevent tails pointing inward
-
-**AF3 server — opt2 (SUBMITTED July 2)**
-- `server_opt2_halfdome.json`: HflK 79–419 × 6 + HflC 1–334 × 6; 4,050 tokens
-- Rationale: half dome with full sequences; richer per-chain context
-
-**AF3 server — first result (FAILED geometrically)**
-- hflk_m3_dome_server (HflK 319–419 × 12 + HflC 270–334 × 12): completed but M3 tails entangled with dome interior
-- Cause: query too short → no directional context; dome interior looked like open space to model
-
-**AF3 local gotcha**: if `templates` set in JSON, must also set `unpairedMsa` + `pairedMsa` (all-or-nothing). Omit all three to let pipeline run freely.
+**Abandoned branches from this effort**:
+- Midway3 local AF3 (job 51372128, HflK 319–419 × 12 + HflC full × 12): superseded by the server `opt1_extended` result before it was needed
+- AF3 server `opt2_halfdome` (HflK 79–419 × 6 + HflC 1–334 × 6): not pursued once `opt1_extended` succeeded
+- First AF3 server attempt (HflK 319–419 × 12 + HflC 270–334 × 12, short query): M3 tails entangled with dome interior — root cause was insufficient directional context, fixed by extending the query in `opt1_extended`
+- **AF3 local gotcha** (for future reference): if `templates` is set in the JSON, `unpairedMsa`/`pairedMsa` must also be set (all-or-nothing rule) — omit all three to let the pipeline search automatically
 
 ### GPU Benchmark — Midway3 A100 (partial results)
 - **Purpose**: Characterize GPU scaling for 1.7M atom system; informed by Dr. Trung's data (1 GPU + 8 PE = 13 ns/day for 1M atoms on Beagle3 A100; multi-GPU gives no benefit)
@@ -425,6 +438,14 @@ Multiple parallel approaches running to predict HflK M3 (356–419) in dome cont
 
 - 2-GPU only 1.32× faster than 1 GPU — strong diminishing returns (consistent with Dr. Trung)
 - 16 PE outperforms 8 PE by 47% — larger system (1.7M vs Trung's 1M) better saturates GPU with more CPU threads
+
+### ThinLinc / VMD visualization — segfault root-caused, workaround in progress (July 7–8, 2026)
+- **Symptom**: launching `vmd` in a ThinLinc session on Midway3 segfaults immediately after loading plugins
+- **Root cause**: default ThinLinc web URL (`midway3.rcc.uchicago.edu`) load-balances onto a GPU-less login node (landed on login5); VMD falls back to `llvmpipe` software OpenGL (`No CUDA accelerator devices available`), which crashes on this cluster's Mesa/VMD 1.9.4a55 combination
+- **Workaround attempted**: `sinteractive -p gpu -G 1 --time 02:00:00 --account=pi-haddadian` — works (grants a GPU node with X11 forwarding set up) but requires a queue wait; Midway2's `sviz` shortcut does not exist on Midway3
+- **RCC escalation**: emailed Dossay Oryspayev; he suggested trying login3/login4 directly. Web ThinLinc client can't force this — it reconnects to the existing login5 session regardless of URL, since **the web client has no "end existing session" option** (only the native/standalone ThinLinc client does, via an Options/Advanced checkbox). Native-client test with that checkbox not yet confirmed working.
+- **Also emailed Dr. Trung** (same thread as the earlier GPU-scaling question) with the same segfault report
+- **Fallback that always works**: download trajectory + install VMD locally (`~/Downloads/vmd2.0.0a7-pre2-macarm.dmg` → installed to `/Applications/VMD 2.0.0a7-pre2.app` on this Mac, July 7) and view natively — best performance, no ThinLinc/GPU-queue dependency; used this path for the ic/op minimization comparison
 
 ### Main System — 9cz2 full dome + membrane (equilibration complete)
 - **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`
