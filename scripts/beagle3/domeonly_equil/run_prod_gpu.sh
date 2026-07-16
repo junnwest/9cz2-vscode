@@ -1,25 +1,31 @@
 #!/bin/bash
-# GPU production runner for Beagle3 (NAMD 3, 4 GPUs).
+# GPU production runner for Beagle3 (NAMD 3.0.1, dome-only system, 2 GPU).
 # Called by job-submit-beagle3.sbatch.
 #
+# Config: resident mode (CUDASOAintegrate on), HMR OFF (standard PSF, 2fs
+# timestep, standard piston 50/25fs) -- the physics-neutral optimal config
+# benchmarked at 8.23 ns/day (job 52126502, see analysis/namd_vs_openmm_
+# benchmark_plan.md / progress_log.md). HMR's 16.71 ns/day config is faster
+# but was not adopted for this run -- see the accuracy-tradeoff discussion
+# (kinetic/dynamical properties, incl. diffusion, are the documented caveat
+# area, and this project's core question touches membrane/lipid dynamics).
+#
 # Naming convention: outputs are named step7_<N> where N is the CUMULATIVE
-# nanoseconds of production simulated since step6.6, not a sequential run
-# counter (matches Rajiv's convention: /project2/haddadian/rajiv/namd/
-# step7_run20/50/80.inp, where the number in the filename is the running
-# total, e.g. a 30 ns block from step7_20 produces step7_50).
+# nanoseconds of production simulated since step6.6, matching the control
+# system's convention (see control_prod/run_prod_gpu.sh, Rajiv's
+# /project2/haddadian/rajiv/namd/step7_run20/50/80.inp).
 #
 # cumulative_ns.txt is the ledger of truth: "<name> <cumulative_ns>" per line.
-# Self-heals if the previous submission was truncated by wall time (its
-# actual completed steps are read from its own .out log, not assumed from
-# the requested block size) before computing the next block.
+# Self-heals if the previous submission was truncated by wall time.
 #
 # BLOCK_STEPS: steps per submission (2 fs/step). 500,000 = 1 ns, matching
-# Rajiv's original step7_1/step7_2/... convention (2026-07-15: switched down
-# from the earlier 8ns/4,000,000-step blocks -- chunk size doesn't meaningfully
-# affect throughput, since NAMD's per-step cost is independent of block length
-# and the fixed startup/toppar-parsing overhead is a small fraction of even a
-# 1ns block's runtime. Tradeoff is purely practical: more frequent manual
-# resubmission, since nothing auto-chains yet).
+# Rajiv's original step7_1/step7_2/... convention (he later scaled to 10ns+
+# blocks via step7_run20.inp once established, but this project is starting
+# at the same granularity he did). Chunk size doesn't meaningfully affect
+# throughput -- NAMD's per-step cost is independent of block length, and the
+# fixed startup/toppar-parsing overhead (~1-2 min) is <1% of a 1ns block's
+# ~2.9h runtime at the benchmarked 8.23 ns/day. The tradeoff is purely
+# practical: more frequent manual resubmission (nothing auto-chains yet).
 
 set -e
 
@@ -31,18 +37,17 @@ LEDGER="cumulative_ns.txt"
 # updated. Read its true completed steps from its .out log and append the
 # correct entry (and rename its output files if they don't already match).
 #
-# 2026-07-15 incident: the glob below used to match step7_*.restart.coor
-# unrestricted, which matched leftover benchmark files (e.g.
-# step7_bench_ctrl_resident_4gpu.restart.coor) left in this same directory.
-# Self-heal treated one as "the latest completed production block" and
-# renamed it onto step7_45.* with a plain mv -- silently overwriting and
-# destroying the real 8ns step7_45 trajectory. Fixed two ways: (1) the glob
-# now requires a pure step7_<digits> name, excluding anything with extra
-# suffix text; (2) a hard check refuses to rename onto a target that already
-# exists, instead of silently clobbering it. Also: archive benchmark files
-# out of the production directory as soon as they're no longer needed
-# (see benchmarks_archive/ convention) so they can't collide with this glob
-# in the first place.
+# 2026-07-15 incident (control system): the glob below used to match
+# step7_*.restart.coor unrestricted, which matched a leftover benchmark file
+# left in the same directory. Self-heal treated it as "the latest completed
+# production block" and renamed it onto step7_45.* with a plain mv --
+# silently overwriting and destroying 8ns of real trajectory. Fixed two ways:
+# (1) the glob now requires a pure step7_<digits> name, excluding anything
+# with extra suffix text; (2) a hard check refuses to rename onto a target
+# that already exists, instead of silently clobbering it. Also: archive
+# benchmark files out of the production directory as soon as they're no
+# longer needed (see benchmarks_archive/ convention) so they can't collide
+# with this glob in the first place.
 last_ledger_name=$(tail -1 "$LEDGER" | awk '{print $1}')
 last_ledger_ns=$(tail -1 "$LEDGER" | awk '{print $2}')
 
@@ -86,7 +91,7 @@ sed "s/^numsteps.*/numsteps                ${BLOCK_STEPS};/" | \
 sed "s/^run .*/run                     ${BLOCK_STEPS};/" \
 > step7_run.inp
 
-namd3 +p${SLURM_NTASKS_PER_NODE} +devices 0,1,2,3 step7_run.inp > "${OUT}.out"
+namd3 +p${SLURM_NTASKS_PER_NODE} +devices 0,1 step7_run.inp > "${OUT}.out"
 
 actual_steps=$(grep '^TIMING' "${OUT}.out" | tail -1 | awk '{print $2}')
 actual_ns=$(echo "scale=4; ${actual_steps} * 2 / 1000000" | bc)

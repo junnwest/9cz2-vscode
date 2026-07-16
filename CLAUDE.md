@@ -143,7 +143,7 @@ ssh midway3 "squeue -u junseo --format='%.10i %.12j %.6D %.8T %.10M %.10l %Z'"
 # Progress of the control system (Midway3) and Beagle3
 ssh midway3 "ls /scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/step7_*.coor 2>/dev/null | sort -V | tail -1"
 ssh midway3 "ls /project2/haddadian/junseo/beagle3-jobs/control_prod/step7_*.coor 2>/dev/null | sort -V | tail -1"
-ssh midway3 "grep 'TIMING' /project2/haddadian/junseo/beagle3-jobs/control_prod/step7_22.out 2>/dev/null | tail -1"
+ssh midway3 "grep 'TIMING' /project2/haddadian/junseo/beagle3-jobs/control_prod/step7_37.out 2>/dev/null | tail -1"
 ```
 
 ```bash
@@ -375,9 +375,98 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of July 8, 2026 — Day 26–27)
+## Current Systems (as of July 16, 2026 — Day 35)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
+
+**IMPORTANT — Beagle3 is now the primary cluster for all 5 production/equilibration systems.**
+Direct Beagle3 access (`ssh beagle3`, same ControlMaster pattern as `midway3`) was granted July 8 and
+compute submission rights (`beagle3-exusers` account) confirmed shortly after — the earlier "staged,
+awaiting resubmission by Kaylie" workflow described later in this section is now **obsolete**; do not
+follow it. `/project2/haddadian` (shared Lustre storage) is directly readable/writable from both
+Midway3 and Beagle3 login nodes — no need to bounce through Midway3 for cross-cluster file checks.
+
+### The 5 systems
+
+| Name | Protein content | Lipid composition | Status (July 16) |
+|---|---|---|---|
+| `control` | none (membrane-only baseline) | Composition #1 | Production, 37.53 ns cumulative |
+| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 8.05 ns cumulative |
+| `dome-bact` | dome only | Composition #2 | Equilibrating (step6.5 of 6) |
+| `full-model` | full dome + FtsH | Composition #1 | Equilibration COMPLETE, production not yet started |
+| `full-bact` | full dome + FtsH | Composition #2 | Equilibrating (step6.5 of 6) |
+
+**Composition #1** ("generic model"): DPPE 70% / POPG 12.5% / DOPG 12.5% / LOACL1 2.5% / TLCL1 2.5%.
+Matches the textbook whole-cell/bulk *E. coli* inner-membrane average (~70-80% PE, ~20-25% PG, ~5% CL)
+closely — this was the project's original/default composition before the two-lipid-comp plan existed.
+
+**Composition #2** ("bacterial"/cardiolipin-microdomain): 74% PG (37% POPG + 37% DOPG), 20% cardiolipin
+(10% LOACL1 + 10% TLCL1), 6% DPPE. Does NOT match any bulk bacterial membrane average in the
+literature — it's the inverse of composition #1 (PG/CL-dominant, PE-depleted). Dr. Haddadian calls
+this one "the bacterial lipid," which makes sense under this reading: cardiolipin-enriched
+microdomains (CMDs) are a *distinctively bacterial* signature (no eukaryotic membrane looks like
+this), concentrate at *E. coli* cell poles/septum, and cardiolipin specifically controls HflK/C's
+membrane localization (Escherichia coli SPFH Membrane Microdomain Proteins HflKC paper,
+PMC10434171) — composition #2 likely represents the actual local lipid environment HflK/C lives in,
+vs. composition #1 being a generic PE-heavy model membrane that happens to use bacterial lipid species.
+
+Both `dome-model`/`full-model` and `dome-bact`/`full-bact` are built from the exact same AF3
+ic-minimized protein structure (`dome_m3_af3_ic_minimized_final.pdb` /
+`dome_m3_af3_ic_minimized_final_noftsh.pdb`) — confirmed directly, not assumed — so the
+composition-#1-vs-#2 comparison isn't confounded by a different protein build.
+
+**Beagle3 paths** (mid-reorganization to `/scratch/beagle3/junseo/`):
+- `control` — `/scratch/beagle3/junseo/control/` (moved)
+- `dome-bact` — `/scratch/beagle3/junseo/dome-bact/` (built here from the start)
+- `full-bact` — `/scratch/beagle3/junseo/full-bact/` (built here from the start)
+- `dome-model` — still `/project2/haddadian/junseo/beagle3-jobs/domeonly_equil/` (move deferred — has a live production job; don't rename a directory a running SLURM job has as its WorkDir)
+- `full-model` — still `/project2/haddadian/junseo/beagle3-jobs/full_equil/` (move deferred, same reason — equilibration just finished, production not started yet)
+
+### NAMD vs OpenMM — decided (NAMD wins)
+
+A systematic benchmark sweep (~35 configs, on `dome-model`, replicated where results looked
+inconsistent) found **NAMD 3.0.1, GPU-resident mode, HMR+4fs, 2 GPU/16 PE, A100-pinned = 16.71
+ns/day**, beating the best OpenMM config (8.2.0, plain HMR+4fs, force-switch preserved,
+replicated) at 10.91 ns/day by ~53%. Full methodology/results in
+`analysis/namd_vs_openmm_benchmark_plan.md` and the session's Claude Artifact chart.
+Key findings, all now baked into the production configs below:
+- **GPU-model confound**: Beagle3 mixes A100 (nodes 0001-0022) and A40 (nodes 0023-0044); always pin `--constraint=a100`, or results are not comparable.
+- **Multi-GPU scaling is non-monotonic**: 2 GPU is the sweet spot; 3-4 GPU regress *below* 1-GPU performance (not fully root-caused; suspected single-GPU PME serialization bottleneck).
+- **HMR decision**: HMR (mass repartitioning + 4fs timestep) gives ~2x speedup but measurably compromises kinetic/dynamical properties (diffusion coefficients, anything time-resolved) — structural/thermodynamic properties are fine, but this project's core question touches membrane/lipid dynamics. **Not adopted for production** — `control` and `dome-model` both run non-HMR (2fs, standard piston). Isolated HMR's exact contribution empirically on the identical config: HMR on = 16.71 ns/day, HMR off = 8.23 ns/day, almost entirely from the doubled timestep (per-step wall time nearly identical either way).
+- **Production config for all 5 systems**: NAMD 3.0.1, GPU-resident mode (`CUDASOAintegrate on`), non-HMR (standard PSF, 2fs, standard piston 50/25fs), 2 GPU / 16 PE, A100-pinned.
+- **Equilibration config for all 5 systems** (different from production — proven-robust, not speed-optimized): NAMD 3.0.1, 1 GPU, **offload mode** (`CUDASOAintegrate off`) — resident mode can't survive the harsh minimize→velocity-reassignment transition at step6.1, but is fine for production once already-equilibrated.
+- **CHARMM-GUI gotcha, every fresh download**: `CUDASOAintegrate` is missing entirely by default from step6.x/step7_production.inp — must be patched in manually (insert before `rigidBonds all`) or GPU mode silently falls back to something else.
+
+### Production chunk size: 1 ns blocks
+
+Matches Rajiv's own original convention (`step7_1`, `step7_2`, ... in `/project2/haddadian/rajiv/namd/`
+— he later scaled up to 10ns+ blocks once established, but 1ns was his starting point). Chunk size
+doesn't meaningfully affect throughput (NAMD's per-step cost is independent of block length; the fixed
+toppar-parsing startup overhead is <1% of even a 1ns block's runtime) — the only real tradeoff is more
+frequent manual resubmission, since nothing auto-chains yet. `run_prod_gpu.sh`'s `BLOCK_STEPS=500000`
+in both `control_prod/` and `domeonly_equil/`.
+
+### Two incidents from July 15-16 — read before touching `run_prod_gpu.sh` again
+
+1. **Data loss on `control`** (fixed): the self-heal step in `run_prod_gpu.sh` (finds "the latest
+   completed block" via `ls -t step7_*.restart.coor`) matched a leftover benchmark restart file that
+   was still sitting in the live production directory (never archived). Self-heal renamed it onto the
+   existing `step7_45.*` filenames with a plain `mv`, silently overwriting and destroying a real 8ns
+   block. **Fix deployed** (both `control_prod/run_prod_gpu.sh` and `domeonly_equil/run_prod_gpu.sh`):
+   glob tightened to `grep -E '^step7_[0-9]+\.restart\.coor$'` (excludes anything with extra suffix
+   text), plus a hard check that refuses to rename onto an existing target instead of overwriting it.
+   `control`'s trajectory was rolled back to the last verified-good checkpoint (`step7_37`, 37.53 ns) —
+   the corrupted 37.53→45.53 ns window no longer exists in any form.
+   **Rule going forward**: archive a system's benchmark files into a sibling `benchmarks_archive/`
+   folder *before* production ever starts in that directory, not "later."
+2. **Script-overwrite race condition on `dome-model`** (fixed, no data lost): overwriting a
+   `run_prod_gpu.sh` file on disk while a *previous* invocation of that same script is still
+   mid-execution (paused waiting on a many-hour NAMD run) can corrupt that already-running bash
+   process when it resumes reading the file afterward — it may read a mangled mix of old/new content
+   and crash. The underlying NAMD run itself is unaffected (separate process, already dispatched) —
+   only the bash wrapper's post-run bookkeeping (the ledger append) can fail. If this happens: check
+   whether the actual `.out` log shows `End of program` cleanly (if so, the block is real and just
+   needs its ledger line added by hand) before assuming data loss.
 
 ### M3 Grafted Dome — NAMD Minimization (COMPLETE — ready for CHARMM-GUI)
 - **Input**: `dome_m3_rotated.pdb` — Rajiv's dome + AF3 HflK M3 tails (356–419) grafted onto all 12 HflK chains; junction gaps closed; 2D omega/phi rotation search (2° steps) with inward constraint applied
@@ -447,35 +536,20 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - **Also emailed Dr. Trung** (same thread as the earlier GPU-scaling question) with the same segfault report
 - **Fallback that always works**: download trajectory + install VMD locally (`~/Downloads/vmd2.0.0a7-pre2-macarm.dmg` → installed to `/Applications/VMD 2.0.0a7-pre2.app` on this Mac, July 7) and view natively — best performance, no ThinLinc/GPU-queue dependency; used this path for the ic/op minimization comparison
 
-### Main System — 9cz2 full dome + membrane (equilibration complete)
-- **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-9cz2fulldome-8119908655/namd/`
-- **Input**: `9cz2minimized_08jun_01_ftsh_fixed.pdb` (z-translated +56.4 + 30 in CHARMM-GUI step 2)
-- **CHARMM-GUI session**: 8119908655 — all 36 chains selected (PROA–PRAJ); completed June 14, 2026
-- **System size**: 1,733,042 atoms (full protein + membrane + water/ions)
-- **Status**: Equilibration **COMPLETE** — step6.1–6.6 DCDs all present (completed June 18–19); no production yet; job 50776983 no longer in queue
-- **Pipeline**: ~~CHARMM-GUI build~~ → ~~equilibration~~ → production → GaMD
+### Retired / superseded directories — do not use
 
-### Control System — Membrane-only baseline
-- **Path**: `/scratch/midway3/junseo/26summer-research/charmm-gui-7628525516/namd/`
-- **PSF**: `step5_input.psf` — 632,689 atoms, lipids only (TLCL1, DPPE, POPG, DOPG, LOACL1 + water/ions)
-- **CHARMM-GUI session**: 7628525516, built April 16, 2026
-- **Status**: ~31 ns complete — step7_1–21 on Midway3 (21 ns) + step7_22 partial on Beagle3 via Kaylie (~10 ns, job cut by wall time); Midway3 also has an independent step7_22 (~6.5 ns, ignore in favor of Beagle3 version)
-- **Performance**: ~4.0 ns/day (4–5 caslake nodes); ~6.7 ns/day on Beagle3 4× A100 (with CUDASOAintegrate off)
-- **Analysis completed (June 22)**: Thickness map and mean curvature map over ~31 ns; results at `analysis/control_thickness_31ns.{png,npy}` and `analysis/control_curvature_31ns.{png,npy}`
-- **Purpose**: Baseline to isolate membrane effects from protein effects
+- `beagle3-jobs/main_equil/` — **stale**, predates the AF3 ic-minimized structure and the direct-Beagle3-access workflow; superseded by `full_equil/` (→ `full-model`). Not cleaned up yet, ignore it.
+- The old Midway3-hosted `charmm-gui-9cz2fulldome-8119908655/` and `charmm-gui-7628525516/` (equilibration-era paths for what are now `full-model` and `control`) — superseded by the Beagle3 paths in the table above. `control`'s Midway3-era trajectory (`step7_1`-`step7_21`, 26.4 ns) is still real/valid and is part of its current cumulative total; it's just no longer where *new* production runs happen.
+- "Staged, awaiting resubmission by Kaylie" workflow — obsolete since direct Beagle3 compute access was granted (see note at the top of this section).
 
-### Beagle3 GPU Jobs — Staged, Awaiting Resubmission by Kaylie
-- **Staging location (Midway3)**: `/project2/haddadian/junseo/beagle3-jobs/`
-- **Local scripts**: `scripts/beagle3/` (committed)
-- **Lab contact**: Kaylie (has Beagle3 access); submits from Beagle3 scratch
+### `control` analysis
 
-| Job | Staging dir | Status | Issues fixed |
-|-----|------------|--------|--------------|
-| Main equil (step6.1–6.6) | `beagle3-jobs/main_equil/namd/` | Ready to resubmit | chmod removed from sbatch; `CUDASOAintegrate off` added to all 6 step6 inp files |
-| Control prod (step7_22+) | `beagle3-jobs/control_prod/` | Ready to resubmit | chmod removed; `step5_input.str` staged |
-| AF2 dome-24 | `beagle3-jobs/af2_dome24/` | Contingency only | Midway3 job 50972223 is primary; wall time uncertain — revisit if job fails |
-
-**NAMD3 GPU fix**: All NAMD3 step6 configs have `CUDASOAintegrate off` before `rigidBonds all` — this prevents RATTLE constraint failures from single-precision GPU arithmetic on large systems.
+Thickness/curvature/order-parameter/area-per-lipid results live in `analysis/control/<Nns>/<script>/`
+(31ns = old baseline before this week's rebuild; 35ns = current, computed on the corrected
+post-incident trajectory). See progress log July 15-16 entry for methodology notes (Voronoi APL,
+order-parameter alkene-carbon fixes, curvature grid-resolution fix). The Voronoi APL script
+(`control_apl_voronoi_35ns.py`, on Midway3 in `26summer-research/analysis/`) should be reused
+unchanged for the other 4 systems for a fair comparison, not reimplemented per-system.
 
 ## Midway3 Directory Structure
 

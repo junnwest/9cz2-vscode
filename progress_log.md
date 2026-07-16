@@ -7,6 +7,80 @@
 
 ---
 
+## July 15–16, 2026 — Days 34–35
+
+**Beagle3 scratch reorganization started**
+- Began consolidating the 5 systems under `/scratch/beagle3/junseo/` (previously scattered under `/project2/haddadian/junseo/beagle3-jobs/` with inconsistent directory names). Moved `control` (server-side rsync from `/project2`, ~10s at 200+ MB/s — much faster than routing through local machine); staged `dome-bact`/`full-bact` there directly from the start since they were never staged anywhere else. `dome-model`/`full-model` deferred until no live job uses their current path (can't rename a directory a running SLURM job has as its WorkDir)
+
+**dome-bact / full-bact staged and equilibration started**
+- Two new CHARMM-GUI downloads (`charmm-gui-no-ftsh`, `charmm-gui-ftsh`) verified against composition #2 (74% PG / 20% CL / 6% PE) — counted lipid residues directly from `step5_input.pdb`: 138 DPPE / 851 POPG / 851 DOPG / 230 LOAC / 230 TLCL = exactly 6.0/74.0/20.0% match. Same AF3 ic-minimized protein structure as `dome-model`/`full-model`, so the lipid-composition comparison isn't confounded by a different protein build
+- Patched missing `CUDASOAintegrate off` into all step6.x + step7_production.inp (same gap as before, CHARMM-GUI doesn't include it by default)
+- Equilibration submitted (jobs 52188526, 52188527), mirroring `full-model`'s proven-robust recipe (NAMD 3.0.1, 1 GPU, offload mode, A100-pinned). Both healthy, no errors, working through step6.1–6.6 as of session close (currently on step6.5)
+
+**Chunk size changed to 1 ns for all systems**
+- User flagged that Rajiv's own convention (`/project2/haddadian/rajiv/namd/step7_1...step7_9`) used 1 ns blocks, not the 8 ns blocks adopted earlier this week. Checked: Rajiv actually used 1 ns blocks *early* and scaled up to 10 ns+ blocks later (`step7_run20.inp`, 5,000,000 steps) once established — so 1 ns was his starting point, not his steady-state
+- Confirmed chunk size doesn't meaningfully affect throughput (NAMD's per-step cost is independent of block length; startup/toppar-parsing overhead is <1% even at 1 ns block length) — the only real cost is more frequent manual resubmission, since nothing auto-chains yet
+- `BLOCK_STEPS` changed 4,000,000 → 500,000 in both `control_prod/run_prod_gpu.sh` and `domeonly_equil/run_prod_gpu.sh`, deployed live
+
+**`control` production data-loss incident — root-caused and fixed**
+- `run_prod_gpu.sh`'s self-heal step (finds "the latest completed block" via `ls -t step7_*.restart.coor`) matched a leftover GPU-count benchmark restart file still sitting in `control`'s live directory (never archived, unlike `dome-model`'s). Self-heal renamed it onto the existing `step7_45.*` filenames with a plain `mv` — silently overwriting and destroying the real 8 ns block that was there (37.53→45.53 ns)
+- Discovered the corruption cascaded into the cumulative-ns ledger too: the benchmark's real duration (0.05 ns) got added *on top of* the already-correct 45.53 value instead of the true physical branch point (36.4 ns by direct frame count), inflating the ledger to a fabricated 45.58 ns. A job had already started running against that bad baseline before the fix landed — killed it (`scancel`), deleted its incomplete partial output, and corrected the ledger
+- **User's call**: rather than patch around the gap, fully discard everything after the last verified-good checkpoint (`step7_37`, 37.53 ns) and restart production from there. Deleted all `step7_45.*` files, removed the ledger's trailing bad line, resubmitted — `control`'s real, continuous, gap-free trajectory is now anchored at **37.53 ns**, not 45.53
+- Fix applied to both `control_prod/run_prod_gpu.sh` and `domeonly_equil/run_prod_gpu.sh`: (1) self-heal glob tightened to `grep -E '^step7_[0-9]+\.restart\.coor$'`, excluding any filename with extra suffix text; (2) hard check added — refuses to rename onto a target that already exists instead of silently overwriting
+- Lesson for future systems: archive benchmark files out of a system's live production directory (sibling `benchmarks_archive/` folder) *before* production ever starts there, not "later"
+
+**A second, unrelated bug from editing a live script**
+- Overwrote `dome-model`'s `run_prod_gpu.sh` on disk (as part of the fix above) while that system's *own* 24-hour production job was still mid-execution, paused waiting on NAMD. When NAMD finished and the bash wrapper resumed reading the script file to append its final ledger line, it read a corrupted mix of old/new file content (the file had been substantially restructured, not just appended to) and crashed with a "No such file or directory" error — job 52134348 shows `FAILED`, exit 127
+- The underlying NAMD run itself completed perfectly cleanly (step 4,000,000/4,000,000, "End of program", valid restart files) — only the bash wrapper's bookkeeping crashed after. No data lost; manually appended the missing `step7_8 8.0500` ledger line and resubmitted
+- **Lesson**: don't overwrite a script file while a long-running invocation of it may still be mid-execution and about to resume reading from disk
+
+**`full-model` equilibration complete**
+- Job 52124727 `COMPLETED`, exit 0:0, ~1 day 3.7h total. step6.6 reached its full target (step 1,135,000) cleanly. Ready for production setup (not yet started as of session close)
+
+**`control` system analysis pipeline built (thickness, curvature, area-per-lipid, order parameter)**
+- Reran thickness + curvature over the corrected, gap-free **35 ns** window (Midway3 `step7_1`-`step7_21` + Beagle3 `step7_37`, 364 frames total, using first 350). Thickness: mean 43.93 Å (37.55–50.00 Å range). Curvature: found the original 15×15 grid gave physically implausible magnitudes (±0.8 (1/Å), implying a ~1-3 Å radius of curvature — smaller than a bond length); reran at 8×8 grid with a data-driven percentile-based color scale instead of the old fixed ±0.01, giving a much more reasonable ±0.37-0.49 (1/Å) range — root cause was too few headgroup atoms per bin for a stable curvature fit at 15×15
+- Order parameter (S_CD per acyl-chain carbon): Rajiv's local `lipidorderkit` checkout was broken (git-tracked but the actual `lipidorder/lipid_order.py` source was missing on disk); traced its `git remote` to the real upstream (`github.com/ricard1997/lipidorderkit`) and cloned a fresh copy into the user's own scratch space (explicit user go-ahead required — fetching/running third-party code). Found and fixed two real bugs in the original `order_sn1`/`order_sn2` functions: an off-by-one in the carbon-counting loop, and missing alkene-carbon hydrogen-name overrides for POPG/DOPG (the original only special-cased POPE/POPS, despite POPG's sn2 tail and DOPG's both tails having the same oleoyl double-bond chemistry) — verified the correct hydrogen names directly against `step5_input.psf` bond topology rather than guessing. Cardiolipin (LOACL1/TLCL1) excluded entirely — 4 acyl chains with completely different `CA/CB/CC/CD` atom naming, not the sn1/sn2 two-tail model this method assumes
+- Area per lipid: built fresh (no existing script anywhere, including Rajiv's directory). First version used the simple box-area/leaflet-count method; user asked for 2D periodic Voronoi tessellation on whole-lipid centers of mass instead, for a method that (a) can resolve per-lipid-type APL and (b) stays accurate under local heterogeneity (relevant once protein-containing systems are analyzed). Rebuilt using `scipy.spatial.Voronoi` with 3×3 periodic tiling. Confirmed mathematically (and numerically) that the overall/combined mean is identical between both methods (54.35 Å² both times) — Voronoi's real value is the per-type breakdown, which the simple method can't produce at all: cardiolipin (~71-73 Å²) is noticeably larger than the single-headgroup lipids (~53-56 Å²), consistent with its bulkier 4-tail structure
+- All of the above reran from scratch on request, after the `control` data-loss incident, to keep every deliverable computed on a single consistent, gap-free window
+
+**Local `analysis/` folder reorganized**
+- Restructured into `<system>/<Nns>/<script-type>/` subfolders (e.g. `analysis/control/35ns/thickness/`) per user request, for consistency as `dome-model`/`full-model`/`dome-bact`/`full-bact` accumulate their own analysis runs. General reference docs (literature review, benchmark plan) and the retired `no-dome` system's old lipid-proximity output left/organized separately, not tied to the new 5-system naming
+
+**Five systems formally named**
+- `control`, `dome-model`, `dome-bact`, `full-model`, `full-bact` — see CLAUDE.md for the full naming table and lipid-composition rationale (composition #1 = generic PE-dominant model membrane; composition #2 = the true cardiolipin-microdomain bacterial signature, per Dr. Haddadian's own usage and consistent with published cardiolipin-microdomain/HflC-localization literature)
+
+**Dr. Haddadian forwarded an Argonne (ALCF) email thread on GaMD**
+- Unrelated group (Prof. Stephen Meredith's lab) discussing GaMD setup on Aurora/Polaris with Argonne's Arvind Ramanathan/Moeen Meigooni. Key takeaway for later: NAMD's new GPU-resident GaMD code is NVIDIA/AMD-only (doesn't run on Aurora's Intel GPUs — irrelevant to us, Beagle3 is NVIDIA); separately, Argonne's own past experience found NAMD underperforms OpenMM specifically for enhanced-sampling/alchemical methods (CPU-fallback bottleneck), though Meigooni notes this gap may close once NAMD's new GPU-resident GaMD is actually used. Relevant to this project's own "planned next" GaMD phase — when that starts, treat NAMD-vs-OpenMM performance for GaMD as its own open empirical question, not an assumption carried over from this summer's conventional-MD benchmarking (where NAMD won decisively)
+
+---
+
+## July 9–14, 2026 — Days 28–33
+
+**NAMD vs OpenMM systematic speed sweep (dome-only system)**
+- Debugged and completed dome-only system's NAMD equilibration (root cause: missing `CUDASOAintegrate off` — GPU-resident mode can't survive the harsh minimize→velocity-reassignment transition at step6.1; fixed by running that step in offload mode). Verified and ran equilibration for the parallel OpenMM-format CHARMM-GUI download too
+- Ran a large, systematic benchmark sweep on Beagle3 across both engines: PE count, GPU-resident vs. offload mode, precision, integrator choice, vdW treatment, hydrogen mass repartitioning (HMR) + extended timestep (2fs→3/4/5fs), PME/reporting-frequency settings, and NAMD/OpenMM version. ~35 distinct configurations tested, several replicated 2-3× after early results looked inconsistent
+- **Major confound found and fixed**: Beagle3 mixes A100 (nodes 0001-0022) and A40 (nodes 0023-0044) GPUs; early "inconsistent" results (especially OpenMM's) turned out to be pure hardware artifacts from jobs randomly landing on the slower A40s. Retroactively audited every prior job's `NodeList` via `sacct`; fixed going forward with `--constraint=a100` on all jobs
+- **Major finding**: multi-GPU scaling is non-monotonic for this system size — 2 GPU gives ~1.5-2x speedup over 1 GPU, but 3-4 GPU regress *below* 1-GPU performance (root cause not fully confirmed; leading hypothesis is single-GPU PME serialization bottlenecking beyond 2 devices; `+pmePEs` unsupported on this NAMD build, so couldn't test directly). This contradicted Dr. Trung's prior data on a smaller system — confirmed it's a real system-size-dependent effect, not an assumption
+- **Winning config**: NAMD 3.0.1, GPU-resident mode, HMR + 4fs timestep (with piston period/decay doubled for stability), 2 GPU / 16 PE, A100 → **16.71 ns/day**, beating best OpenMM (8.2.0, plain HMR+4fs, force-switch preserved, replicated) at 10.91 ns/day by ~53%
+- Root-caused four distinct NAMD instability bugs along the way: missing `CUDASOAintegrate off`, insufficient `margin` for larger timestep, stale equilibration velocities inconsistent with HMR-repartitioned masses (fixed via `temperature $temp` instead of reusing `.vel`), and Langevin piston timescale mismatch at 4fs (fixed by doubling period/decay)
+- Full results published as a Claude Artifact (interactive chart + per-setting-detail tables), and a copy-paste-ready markdown table for the lab's Google Doc
+
+**Control system production restored**
+- Found broken: wrong SLURM account (`pi-haddadian`, not in the beagle3 partition's `AllowAccounts` whitelist) and an outdated ad-hoc NAMD build. Fixed both (`beagle3-exusers` account, `namd/3.0.1-multicore-cuda` module); production resumed
+
+**HMR decision for actual production — deliberated, not adopted**
+- Confirmed HMR preserves structural/thermodynamic properties well (area-per-lipid, electron density, order parameters — per literature) but genuinely compromises kinetic/dynamical properties (diffusion coefficients, anything time-resolved), since it works by redistributing atomic mass, which directly changes the real-time dynamics via F=ma
+- Since this project's core question involves membrane/lipid dynamics (and the literature review's own method list includes lateral diffusion coefficient via MSD), chose **not** to adopt HMR for production despite its ~2x speedup — `control` and `dome-model` both run non-HMR (2fs, standard piston), keeping every future kinetic analysis clean. Isolated HMR's exact contribution empirically: same 2GPU/16PE/A100/resident config, HMR on = 16.71 ns/day vs. HMR off = 8.23 ns/day, almost entirely attributable to the doubled timestep (per-step cost nearly identical either way)
+
+**Full system (`full-model`) staged and equilibration started**
+- Confirmed via direct verification that `dome-model` and `full-model` both use the same AF3 ic-minimized protein structure (not different structure-building approaches) — so any future lipid-composition comparison isn't confounded by a different protein build
+- Equilibration submitted (job 52124727) with the same proven-robust recipe as everything else: NAMD 3.0.1, 1 GPU, offload mode, A100-pinned
+
+**Benchmark file cleanup**
+- Archived ~250 leftover benchmark files (9.3 GB of 19 GB total) out of `dome-model`'s live production directory into a sibling `benchmarks_archive/` folder, after confirming every useful number from the whole sweep was already captured in the results table/artifact
+
+---
+
 ## July 7–8, 2026 — Days 26–27
 
 **AF2 dome-24 (job 50972223) — confirmed FAILED, total loss**
@@ -35,6 +109,17 @@
 
 **New machine note**
 - This session (from `Kenneths-MacBook-Pro.local`) required re-establishing the SSH ControlMaster socket multiple times (1h `ControlPersist` expiring); confirmed the socket only forms when connecting via the `midway3` alias (`ssh midway3`), not the full hostname
+
+**Beagle3 access granted — first direct login**
+- Added a `beagle3` entry to `~/.ssh/config` (same ControlMaster pattern as `midway3`); confirmed working after user ran `ssh beagle3` + DUO once
+- Also discovered `/scratch/midway3` and `/project2/haddadian` are both directly readable from Beagle3 login nodes (not just the shared `project2` staging area) — no need to bounce through Midway3 for cross-cluster file checks
+
+**Control system production naming bug found and fixed**
+- Investigating `control_prod/step7_22` (Kaylie's Beagle3 run) revealed `run_prod_gpu.sh` used `STEPS_PER_RUN=25000000` (50 ns/submission) — far more than the ~10 ns that fits in the 36h `beagle3-prio` wall time at observed throughput (~0.026 s/step). Job 50868924 was killed by `TIME LIMIT` at 5,015,000/25,000,000 steps (~10.03 ns actual, not the intended 50 ns)
+- Root cause of the confusion: our script names outputs by **sequential run index** (`NEXT = last + 1`), not content. Traced Rajiv's older convention (`/project2/haddadian/rajiv/namd/step7_run20/50/80.inp`) and confirmed his `step7_N` means **N = cumulative ns since step6.6** (a 10 ns block from `step7_10` → `step7_20`; a 30 ns block `step7_20` → `step7_50`, etc.) — the filename is deliberately sized to equal the running total
+- Recomputed true cumulative for the control system as of the Beagle3 restart point: step7_1–19 (19 ns) + step7_20 partial (0.5 ns, from its own `.out` log, not the ~0.42 ns previously estimated) + step7_21 8 ns block (Midway3) = 27.5 ns, + step7_22 actual 10.03 ns (Beagle3) = **37.53 ns true cumulative**
+- Renamed `step7_22.*` → `step7_37.*` on Beagle3 (`control_prod/`) to match; **rewrote `run_prod_gpu.sh`** to (a) name outputs by cumulative ns going forward, (b) use 8 ns/block (4,000,000 steps — matches Rajiv's own historical block size for this system, ~29h at observed throughput, safe margin under the 36h cap), (c) track true cumulative in a `cumulative_ns.txt` ledger that self-heals (renames + corrects the ledger) if a future run gets truncated by wall time again
+- Attempted to submit the next block (`step7_45`, 37.53 + 8 ns) as the first real test of direct Beagle3 access — **blocked**: `sbatch` rejects both `beagle3-exusers` (not a member) and `pi-haddadian`/`bios10603`/`bios10602` (valid accounts, but `scontrol show partition beagle3` shows `AllowAccounts` is a specific PI whitelist that does not include `pi-haddadian`; only `beagle3-exusers`, `rcc-staff`, and a handful of unrelated PI groups are allowed). Newly-granted Beagle3 access appears to be login/filesystem-only (`ssh beagle3` works, `/project2` and `/scratch/midway3` are both readable) — **not** a compute allocation. Job submission needs `pi-haddadian` added to the partition's `AllowAccounts`, or the user added under `beagle3-exusers` like Kaylie. Follow up with RCC or Dr. Haddadian. Script/naming fixes (`run_prod_gpu.sh`, `step7_22`→`step7_37` rename, `cumulative_ns.txt` ledger) are in place and ready to run once submission rights are granted.
 
 ---
 
