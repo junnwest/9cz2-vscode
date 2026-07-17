@@ -375,7 +375,7 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of July 16, 2026 — Day 35)
+## Current Systems (as of July 17, 2026 — Day 36)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
@@ -388,13 +388,18 @@ Midway3 and Beagle3 login nodes — no need to bounce through Midway3 for cross-
 
 ### The 5 systems
 
-| Name | Protein content | Lipid composition | Status (July 16) |
+| Name | Protein content | Lipid composition | Status (July 17) |
 |---|---|---|---|
-| `control` | none (membrane-only baseline) | Composition #1 | Production, 37.53 ns cumulative |
-| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 8.05 ns cumulative |
-| `dome-bact` | dome only | Composition #2 | Equilibrating (step6.5 of 6) |
-| `full-model` | full dome + FtsH | Composition #1 | Equilibration COMPLETE, production not yet started |
-| `full-bact` | full dome + FtsH | Composition #2 | Equilibrating (step6.5 of 6) |
+| `control` | none (membrane-only baseline) | Composition #1 | Production, 39.53 ns cumulative (step7_39 block done July 16, then idle — needs resubmit to continue) |
+| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 9.05 ns cumulative (step7_9 block done July 16, then idle — needs resubmit to continue) |
+| `dome-bact` | dome only | Composition #2 | Equilibrating (step6.5→6.6, auto-chaining in job 52188526) |
+| `full-model` | full dome + FtsH | Composition #1 | Production launch failed then re-fixed — see "first-production-block transition" note below; warm-up job 52338639 submitted July 16 |
+| `full-bact` | full dome + FtsH | Composition #2 | Equilibrating (step6.5→6.6, auto-chaining in job 52188527) |
+
+**Nothing auto-chains** — each production `sbatch` runs one 1 ns block then exits (clean COMPLETED, not a
+failure). `control` and `dome-model` are currently idle for this reason and need a resubmit to keep
+accumulating. The two `*-bact` equilibrations DO auto-chain step6.1→6.6 within one job (their
+`run_equilibration_gpu.sh` loops `for i in {1..6}`), so they'll finish equilibration without intervention.
 
 **Composition #1** ("generic model"): DPPE 70% / POPG 12.5% / DOPG 12.5% / LOACL1 2.5% / TLCL1 2.5%.
 Matches the textbook whole-cell/bulk *E. coli* inner-membrane average (~70-80% PE, ~20-25% PG, ~5% CL)
@@ -420,7 +425,7 @@ composition-#1-vs-#2 comparison isn't confounded by a different protein build.
 - `dome-bact` — `/scratch/beagle3/junseo/dome-bact/` (built here from the start)
 - `full-bact` — `/scratch/beagle3/junseo/full-bact/` (built here from the start)
 - `dome-model` — still `/project2/haddadian/junseo/beagle3-jobs/domeonly_equil/` (move deferred — has a live production job; don't rename a directory a running SLURM job has as its WorkDir)
-- `full-model` — still `/project2/haddadian/junseo/beagle3-jobs/full_equil/` (move deferred, same reason — equilibration just finished, production not started yet)
+- `full-model` — still `/project2/haddadian/junseo/beagle3-jobs/full_equil/` (move deferred — production being launched here; see first-production-block transition note above)
 
 ### NAMD vs OpenMM — decided (NAMD wins)
 
@@ -435,6 +440,7 @@ Key findings, all now baked into the production configs below:
 - **HMR decision**: HMR (mass repartitioning + 4fs timestep) gives ~2x speedup but measurably compromises kinetic/dynamical properties (diffusion coefficients, anything time-resolved) — structural/thermodynamic properties are fine, but this project's core question touches membrane/lipid dynamics. **Not adopted for production** — `control` and `dome-model` both run non-HMR (2fs, standard piston). Isolated HMR's exact contribution empirically on the identical config: HMR on = 16.71 ns/day, HMR off = 8.23 ns/day, almost entirely from the doubled timestep (per-step wall time nearly identical either way).
 - **Production config for all 5 systems**: NAMD 3.0.1, GPU-resident mode (`CUDASOAintegrate on`), non-HMR (standard PSF, 2fs, standard piston 50/25fs), 2 GPU / 16 PE, A100-pinned.
 - **Equilibration config for all 5 systems** (different from production — proven-robust, not speed-optimized): NAMD 3.0.1, 1 GPU, **offload mode** (`CUDASOAintegrate off`) — resident mode can't survive the harsh minimize→velocity-reassignment transition at step6.1, but is fine for production once already-equilibrated.
+- **First-production-block transition gotcha (discovered July 16 on `full-model`)**: the *first* production block — going from a step6.6 equilibration restart to unrestrained resident-mode production — can ALSO blow up in resident mode, not just step6.1. `full-model`'s first block (job 52301891, plain `CUDASOAintegrate on`) died with `SequencerCUDA: Atoms moving too fast` at timestep 361: a localized strained region (almost certainly the FtsH region — the only structural feature `full-model` has that the otherwise-identical `dome-model`, which crossed this same transition fine in resident mode, lacks) that only releases once step6.x restraints drop. Global energy/temp at end of equilibration were normal, so it's a local hot contact, not a bad build. **Fix**: run just the *first* block as an offload warm-up — `CUDASOAintegrate off` + a brief `minimize 5000` + `reinitvels` + ~50 ps (`step7_0_warmup.inp` / `job-submit-warmup.sbatch` in `full_equil/namd/`, mirroring the equilibration offload config that carried this system through step6.6), producing `step7_0` (0.05 ns). Normal resident-mode 1 ns blocks then continue from `step7_0` via `run_prod_gpu.sh`. `control`/`dome-model` didn't need this (no protein / no FtsH); it's specifically the big protein-containing systems where a residual strain is plausible. If the warm-up *also* fails "atoms moving too fast", stop and inspect the FtsH/M3 geometry — do not blind-resubmit.
 - **CHARMM-GUI gotcha, every fresh download**: `CUDASOAintegrate` is missing entirely by default from step6.x/step7_production.inp — must be patched in manually (insert before `rigidBonds all`) or GPU mode silently falls back to something else.
 
 ### Production chunk size: 1 ns blocks
@@ -548,8 +554,24 @@ Thickness/curvature/order-parameter/area-per-lipid results live in `analysis/con
 (31ns = old baseline before this week's rebuild; 35ns = current, computed on the corrected
 post-incident trajectory). See progress log July 15-16 entry for methodology notes (Voronoi APL,
 order-parameter alkene-carbon fixes, curvature grid-resolution fix). The Voronoi APL script
-(`control_apl_voronoi_35ns.py`, on Midway3 in `26summer-research/analysis/`) should be reused
-unchanged for the other 4 systems for a fair comparison, not reimplemented per-system.
+(`control_apl_voronoi_35ns.py`, on Midway3 in `26summer-research/analysis/` — **code lives only on
+Midway3; the repo tracks just the `.npy`/`.png` outputs** in `analysis/control/35ns/apl/`) should be
+reused unchanged for the other 4 systems for a fair comparison, not reimplemented per-system.
+
+**How the Voronoi APL script works** (walked through July 16, for reuse/explanation):
+- Per frame, drops **one point per lipid at its whole-molecule center of mass** (projected to XY) —
+  not the headgroup P. Headgroup atom (`name P or name P1`) is used *only* to assign leaflet
+  membership (via per-frame median headgroup-z split), never as the tessellation point.
+- **Cardiolipin (LOACL1/TLCL1) is treated as one lipid = one Voronoi cell** — the `name P or name P1`
+  selector deliberately grabs only cardiolipin's `P1` (not `P2`), giving exactly one point per lipid
+  (an `assert` enforces this). Consequence: cardiolipin reads ~71–73 Å² (≈2× the ~53–56 Å² of the
+  single-phosphate lipids), correct for a dimeric 4-tail lipid counted as one molecule.
+- Each leaflet tessellated **separately**; points tiled into a **3×3 periodic supercell** so edge
+  cells are bounded under PBC, then only the central copy's cell areas are read (shoelace formula).
+- Trajectory = 22 stitched DCDs (Midway3 `step7_1`–`step7_21` + Beagle3 `step7_37`), first **350
+  frames = 35 ns** (0.1 ns/frame), the verified-intact post-incident window.
+- Results (`control`, 35 ns): combined **54.35 Å²**; DPPE 52.93, POPG 54.60, DOPG 56.34, LOACL1 71.49,
+  TLCL1 73.27. Built-in drift check (first vs second half): 55.40 → 53.29 Å² (~2 Å² downward drift).
 
 ## Midway3 Directory Structure
 
