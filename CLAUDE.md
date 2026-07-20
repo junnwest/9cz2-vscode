@@ -388,18 +388,27 @@ Midway3 and Beagle3 login nodes — no need to bounce through Midway3 for cross-
 
 ### The 5 systems
 
-| Name | Protein content | Lipid composition | Status (July 17) |
+| Name | Protein content | Lipid composition | Status (July 20) |
 |---|---|---|---|
-| `control` | none (membrane-only baseline) | Composition #1 | Production, 39.53 ns cumulative (step7_39 block done July 16, then idle — needs resubmit to continue) |
-| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 9.05 ns cumulative (step7_9 block done July 16, then idle — needs resubmit to continue) |
-| `dome-bact` | dome only | Composition #2 | Equilibrating (step6.5→6.6, auto-chaining in job 52188526) |
-| `full-model` | full dome + FtsH | Composition #1 | Production launch failed then re-fixed — see "first-production-block transition" note below; warm-up job 52338639 submitted July 16 |
-| `full-bact` | full dome + FtsH | Composition #2 | Equilibrating (step6.5→6.6, auto-chaining in job 52188527) |
+| `control` | none (membrane-only baseline) | Composition #1 | Production, 39.53 ns; relaunched July 20 (4 GPU resident, looping, no cap) |
+| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 10.05 ns; relaunched July 20 (2 GPU resident, looping, **capped at 20 ns** for GaMD) |
+| `dome-bact` | dome only | Composition #2 | Production, 12.0 ns; relaunched July 20 (2 GPU resident, looping, **capped at 20 ns** for GaMD) |
+| `full-model` | full dome + FtsH | Composition #1 | Production, 1.05 ns; **runs OFFLOAD, not resident** — see transition note below; relaunched July 20 (1 GPU offload, looping) |
+| `full-bact` | full dome + FtsH | Composition #2 | Production, 0.05 ns (first real block); **runs OFFLOAD**; relaunched July 20 (1 GPU offload, looping) |
 
-**Nothing auto-chains** — each production `sbatch` runs one 1 ns block then exits (clean COMPLETED, not a
-failure). `control` and `dome-model` are currently idle for this reason and need a resubmit to keep
-accumulating. The two `*-bact` equilibrations DO auto-chain step6.1→6.6 within one job (their
-`run_equilibration_gpu.sh` loops `for i in {1..6}`), so they'll finish equilibration without intervention.
+**Production now LOOPS within a job (as of July 20).** `run_prod_gpu.sh` was rewritten to run sequential
+1 ns chunks until the wall-time allocation is nearly used (or a per-job 12-chunk cap), matching Rajiv's
+convention (iterate many ns, processed in 1 ns chunks) — no more per-ns manual resubmits. Per-system knobs
+are set via env in each sbatch: `DEVICES` (GPU list) and `TARGET_NS` (stop at a total, e.g. 20 for the
+dome systems). Still nothing auto-chains ACROSS jobs — resubmit for another allocation's worth. (dome-bact
+validated the loop: ran 0→12 ns in one job before the rewrite's cap.)
+
+**`dome-model`/`dome-bact` capped at 20 ns** (`TARGET_NS=20`) — conventional MD stops there and **GaMD**
+(Gaussian Accelerated MD) runs after, to accelerate the dome opening while keeping everything all-atom.
+GaMD chosen over coarse-graining after research (July 17–20): a Martini AA-protein/CG-membrane hybrid
+couples the protein–lipid *interface* only at CG resolution (loses the lipid-specificity our question
+depends on) and is documented to over-stabilize protein conformational dynamics — the exact thing we study.
+See progress log.
 
 **Composition #1** ("generic model"): DPPE 70% / POPG 12.5% / DOPG 12.5% / LOACL1 2.5% / TLCL1 2.5%.
 Matches the textbook whole-cell/bulk *E. coli* inner-membrane average (~70-80% PE, ~20-25% PG, ~5% CL)
@@ -438,19 +447,33 @@ Key findings, all now baked into the production configs below:
 - **GPU-model confound**: Beagle3 mixes A100 (nodes 0001-0022) and A40 (nodes 0023-0044); always pin `--constraint=a100`, or results are not comparable.
 - **Multi-GPU scaling is non-monotonic**: 2 GPU is the sweet spot; 3-4 GPU regress *below* 1-GPU performance (not fully root-caused; suspected single-GPU PME serialization bottleneck).
 - **HMR decision**: HMR (mass repartitioning + 4fs timestep) gives ~2x speedup but measurably compromises kinetic/dynamical properties (diffusion coefficients, anything time-resolved) — structural/thermodynamic properties are fine, but this project's core question touches membrane/lipid dynamics. **Not adopted for production** — `control` and `dome-model` both run non-HMR (2fs, standard piston). Isolated HMR's exact contribution empirically on the identical config: HMR on = 16.71 ns/day, HMR off = 8.23 ns/day, almost entirely from the doubled timestep (per-step wall time nearly identical either way).
-- **Production config for all 5 systems**: NAMD 3.0.1, GPU-resident mode (`CUDASOAintegrate on`), non-HMR (standard PSF, 2fs, standard piston 50/25fs), 2 GPU / 16 PE, A100-pinned.
+- **Production config**: NAMD 3.0.1, non-HMR (standard PSF, 2fs, standard piston 50/25fs), A100-pinned. **Two variants, split by whether the system contains FtsH:**
+  - **Dome-only + membrane-only systems** (`control`, `dome-model`, `dome-bact`): GPU-**resident** mode (`CUDASOAintegrate on`), 2 GPU / 16 PE (control: 4 GPU / 32 PE). ~8 ns/day.
+  - **FtsH systems** (`full-model`, `full-bact`): GPU-**offload** mode (`CUDASOAintegrate off`), 1 GPU / 8 PE. **Resident mode crashes these** (see transition note below) — offload is the proven-stable fallback, but ~4× slower (~2 ns/day at 1 GPU). A 2-GPU-offload benchmark was submitted July 20 to see if the speed can be recovered.
 - **Equilibration config for all 5 systems** (different from production — proven-robust, not speed-optimized): NAMD 3.0.1, 1 GPU, **offload mode** (`CUDASOAintegrate off`) — resident mode can't survive the harsh minimize→velocity-reassignment transition at step6.1, but is fine for production once already-equilibrated.
-- **First-production-block transition gotcha (discovered July 16 on `full-model`)**: the *first* production block — going from a step6.6 equilibration restart to unrestrained resident-mode production — can ALSO blow up in resident mode, not just step6.1. `full-model`'s first block (job 52301891, plain `CUDASOAintegrate on`) died with `SequencerCUDA: Atoms moving too fast` at timestep 361: a localized strained region (almost certainly the FtsH region — the only structural feature `full-model` has that the otherwise-identical `dome-model`, which crossed this same transition fine in resident mode, lacks) that only releases once step6.x restraints drop. Global energy/temp at end of equilibration were normal, so it's a local hot contact, not a bad build. **Fix**: run just the *first* block as an offload warm-up — `CUDASOAintegrate off` + a brief `minimize 5000` + `reinitvels` + ~50 ps (`step7_0_warmup.inp` / `job-submit-warmup.sbatch` in `full_equil/namd/`, mirroring the equilibration offload config that carried this system through step6.6), producing `step7_0` (0.05 ns). Normal resident-mode 1 ns blocks then continue from `step7_0` via `run_prod_gpu.sh`. `control`/`dome-model` didn't need this (no protein / no FtsH); it's specifically the big protein-containing systems where a residual strain is plausible. If the warm-up *also* fails "atoms moving too fast", stop and inspect the FtsH/M3 geometry — do not blind-resubmit.
+- **FtsH resident-mode crash → run FtsH systems in OFFLOAD (resolved July 17–20)**: NAMD3 GPU-**resident** production (`CUDASOAintegrate on`) crashes the FtsH systems with `SequencerCUDA: Atoms moving too fast`, and this is NOT fixable with a warm-up. The full diagnostic chain on `full-model`:
+  - Plain resident first block (job 52301891) died at **timestep 361**. Suspected a localized FtsH-region strain (the only feature `full-model` has that `dome-model`, which crosses this transition fine in resident, lacks).
+  - An offload warm-up (`minimize 5000` + `reinitvels` + 50 ps offload → `step7_0`) helped — the next resident block survived to **timestep 13,758 (~27 ps)** — but then crashed the same way. So it's **not** a simple local clash a minimization fixes.
+  - **Offload diagnostic (job 52351830) ran a full 1 ns cleanly.** Offload uses the same forces, so a broken structure would crash it too → the structure is fine; it's a **resident-mode numerical fragility** specific to this large FtsH system. (Context: `full-model` is the first FtsH system run in resident-mode production this summer; the older Midway3 full-dome benchmark that ran resident fine was a *different, pre-AF3* build and only 100 ps.)
+  - **Resolution**: FtsH systems (`full-model`, `full-bact`) run production in **offload mode** (`CUDASOAintegrate off`, 1 GPU / 8 PE), ~2 ns/day. The offload warm-up is still used as the first block (`step7_0`) since offload also crosses the equilibration→production transition cleanly. `full-model`'s offload-diagnostic ns was reused as its `step7_1` (not wasted). Dome-only/membrane-only systems keep the faster resident mode.
+  - **Open**: whether resident-mode speed (~4× faster) is recoverable for FtsH systems (e.g. via `margin`, timestep, or a NAMD build fix) — not yet investigated; offload is the safe working path meanwhile.
 - **CHARMM-GUI gotcha, every fresh download**: `CUDASOAintegrate` is missing entirely by default from step6.x/step7_production.inp — must be patched in manually (insert before `rigidBonds all`) or GPU mode silently falls back to something else.
 
-### Production chunk size: 1 ns blocks
+### Production: 1 ns chunks, looped within a job (updated July 20)
 
-Matches Rajiv's own original convention (`step7_1`, `step7_2`, ... in `/project2/haddadian/rajiv/namd/`
-— he later scaled up to 10ns+ blocks once established, but 1ns was his starting point). Chunk size
-doesn't meaningfully affect throughput (NAMD's per-step cost is independent of block length; the fixed
-toppar-parsing startup overhead is <1% of even a 1ns block's runtime) — the only real tradeoff is more
-frequent manual resubmission, since nothing auto-chains yet. `run_prod_gpu.sh`'s `BLOCK_STEPS=500000`
-in both `control_prod/` and `domeonly_equil/`.
+`BLOCK_STEPS=500000` (1 ns) matches Rajiv's convention (`step7_1`, `step7_2`, …). Chunk size doesn't
+affect throughput (NAMD's per-step cost is block-length-independent; startup overhead <1% of a 1 ns block).
+**As of July 20, `run_prod_gpu.sh` LOOPS these chunks within one job** — it runs sequential 1 ns chunks
+until the wall-time allocation is nearly used (measured-chunk-duration check) or a per-job `MAX_CHUNKS=12`
+cap, then stops cleanly. This is Rajiv's actual pattern (iterate many ns, processed in 1 ns chunks) and
+removes the per-ns manual-resubmit babysitting the earlier single-chunk script required. Still nothing
+auto-chains ACROSS jobs — resubmit for another allocation's worth.
+
+Per-system config is set by env vars in each sbatch (not hardcoded in the script), so one `run_prod_gpu.sh`
+serves all five:
+- `DEVICES` — GPU list for `+devices` (`"0"` 1-GPU offload for FtsH systems, `"0,1"` 2-GPU, `"0,1,2,3"` control's 4-GPU).
+- `TARGET_NS` — stop when cumulative reaches this (e.g. `20` for `dome-model`/`dome-bact`; unset = unlimited for the rest).
+- Resident vs offload is set by `CUDASOAintegrate` in `step7_production.inp` (on/off), independent of the script.
 
 ### Two incidents from July 15-16 — read before touching `run_prod_gpu.sh` again
 

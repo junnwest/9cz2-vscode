@@ -7,6 +7,30 @@
 
 ---
 
+## July 17–20, 2026 — Days 36–39
+
+**FtsH resident-mode crash fully diagnosed → FtsH systems run OFFLOAD**
+- Continued the `full-model` production-crash investigation. The offload+minimize warm-up completed clean and produced `step7_0`, but the *first resident-mode production block from it* (job 52347461) **still crashed** `SequencerCUDA: Atoms moving too fast` — this time at **timestep 13,758 (~27 ps)** instead of 361. So the warm-up bought ~27 ps but didn't fix it; not a simple local clash a minimization removes.
+- Per the "if it fails again, stop and diagnose" rule, ran an **offload diagnostic** (job 52351830): `full-model` production in offload mode (1 GPU, same forces, continuing velocities from `step7_0`). It **ran the full 1 ns cleanly** (500,000 steps, End of program, zero instability). Since offload uses identical forces, a broken structure would have crashed it too → the structure is fine; it's a **resident-mode numerical fragility** specific to this large FtsH system.
+- Root-cause framing (why now, never before): `full-model` is the first system combining FtsH + the new AF3 build + resident-mode production. Every "similar" system that worked drops one of those — `dome-model` (same AF3 build, resident, but no FtsH) crosses fine; the old Midway3 full-dome resident benchmark that ran clean was a *different pre-AF3 build*, only 100 ps.
+- **Resolution**: `full-model` and `full-bact` run production in **offload** (`CUDASOAintegrate off`, 1 GPU / 8 PE, ~2 ns/day — ~4× slower than resident's ~8). Dome-only/membrane systems keep faster resident mode. Submitted a 2-GPU-offload benchmark (job 52407197) to see if the FtsH speed is recoverable. Open question: recover resident speed via `margin`/timestep/NAMD-build — not yet investigated.
+
+**Production script rewritten to LOOP chunks within a job**
+- User corrected a misunderstanding: Rajiv's script doesn't exit after 1 ns — it *iterates many ns, processed in 1 ns chunks, within one job*. Rewrote `run_prod_gpu.sh` accordingly: runs sequential 1 ns chunks until the wall-time allocation is nearly used (measured-chunk-duration check) or a `MAX_CHUNKS=12` per-job cap, then stops cleanly. Removes the per-ns manual-resubmit babysitting.
+- Made it one script for all five via env vars in each sbatch: `DEVICES` (GPU list) and `TARGET_NS` (stop at a total). Kept the July-15 self-heal + overwrite-guard.
+- `dome-bact` validated the loop empirically: its first production job (52350287) ran **0 → 12 ns** in one go (hit the 12-chunk cap), Jul 17→19.
+
+**Coarse-graining explored and set aside in favor of GaMD**
+- Extended discussion (prompted by Dr. Haddadian's interest) on Martini CG with *implicit water / CG lipids but atomistic protein*. Worked through the science and **researched the literature** (Wassenaar "Mixing MARTINI" virtual-site coupling; dual-resolution membrane paper PMID 32314586; CHARMM/PRIMO hybrid; Two-Decades-of-Martini review).
+- Key findings that steered away from the hybrid: (1) it's **not standard** — one of several specialized schemes, and the AA-protein-in-CG-*membrane* case specifically isn't an established/validated workflow (published membrane hybrids are lipid-only vesicles); (2) the protein↔environment interaction is necessarily at **CG resolution** (confirmed verbatim in the dual-resolution paper) — so it coarse-grains the very lipid–protein specificity our question depends on (cardiolipin binding, composition effects); (3) literature documents that concurrent AA/CG Martini coupling **over-stabilizes protein conformational dynamics** (or unfolds the protein without the fix) — fatal for studying the dome opening; (4) even the throughput win is smaller than fully-CG (~3–10× vs ~100×) because the AA protein caps the timestep, and it *doesn't accelerate the opening barrier at all* (protein stays atomistic, normal rates).
+- **Decision**: use **GaMD** (already in the plan, "planned next") — all-atom, native in NAMD (no engine switch), flattens the conformational barrier directly (~10–1000× effective on the transition), preserves the lipid-specificity and existing analyses. Hybrid CG is a possible later throughput add-on via the *serial* route (CG-sample → AA-backmap), not concurrent mixing.
+
+**Day-39 relaunch — all 5 systems running again**
+- Returned to find everything idle (nothing running): `control` had a transient no-output failure (52347462, exit 1:0; data intact at 39.53), `dome-model`/`dome-bact` had completed their jobs and nothing auto-chains across jobs, FtsH systems were parked awaiting the offload answer.
+- Relaunched all five with the looping script (jobs 52407134–52407180): `control` (39.53 ns, 4 GPU resident, no cap), `dome-model` (10.05 ns) and `dome-bact` (12.0 ns) both **capped at 20 ns** (`TARGET_NS=20`) for the GaMD handoff, `full-model` (1.05 ns — reused the offload-diagnostic ns as `step7_1`) and `full-bact` (0.05 ns, first real block) both **1 GPU offload**. Plus the 2-GPU-offload benchmark.
+
+---
+
 ## July 16–17, 2026 — Days 35–36
 
 **Session-start status check — all 5 systems**
