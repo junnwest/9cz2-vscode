@@ -1,0 +1,58 @@
+; Martini 3 CG MD setup for dome system
+; Time step: 10 fs (CG standard)
+; Ensemble: NPT
+; Thermostat: velocity rescale
+; Barostat: Berendsen
+
+title                   = Martini 3 dome CG production
+; Run control
+integrator              = md        ; molecular dynamics
+dt                      = 0.01      ; timestep in ps (10 fs for CG)
+nsteps                  = 100000    ; 1000 ps = 1 ns
+; output
+nstxout                 = 0         ; write .trr every N steps (0 = only at end)
+nstvout                 = 0         ; write velocities
+nstlog                  = 500       ; log progress every 5 ps
+nstenergy               = 500       ; write energy every 5 ps
+nstxout-compressed      = 500       ; write compressed trajectory (.xtc) every 5 ps
+compressed-x-precision  = 1000      ; precision of compressed trajectory
+; Neighbor search
+cutoff-scheme           = Verlet    ; use Verlet neighbor list (GPU-friendly)
+nstlist                 = 20        ; update neighbor list every 20 steps (200 fs)
+rlist                   = 1.2       ; neighbor list cutoff (nm)
+; VdW
+vdwtype                 = Cut-off
+vdw-modifier            = Potential-shift-Verlet
+rvdw                    = 1.2       ; VdW cutoff
+; Electrostatics
+coulombtype             = PME       ; PME for long-range Coulomb
+rcoulomb                = 1.2       ; Coulomb cutoff
+pme-order               = 4
+fourier-spacing         = 0.12
+ewald-rtol              = 1e-5
+; Pressure coupling (NPT)
+pcoupl                  = Berendsen
+pcoupltype              = isotropic
+tau-p                   = 4.0       ; pressure coupling time constant
+ref-p                   = 1.0       ; reference pressure (bar)
+compressibility         = 3.0e-4    ; isothermal compressibility (bar^-1)
+; Temperature coupling
+tcoupl                  = v-rescale ; velocity rescale
+tau-t                   = 1.0       ; coupling time constant
+tc-grps                 = System
+ref-t                   = 303.15    ; reference temperature (K), 30°C
+; Initial velocity
+gen-vel                 = yes
+gen-temp                = 303.15
+gen-seed                = -1        ; random seed
+; Constraints
+constraint-algorithm    = SHAKE
+constraints             = h-bonds   ; constrain bonds to hydrogen
+continuation            = no        ; do not restart from a checkpoint
+; Misc
+nstcomm                 = 100
+comm-mode               = linear
+pbc                     = xyz
+DispCorr                = EnerPres  ; apply long-range dispersion corrections
+; GPU settings
+gpu-id                  = 0 1       ; use both GPUs (if available)
