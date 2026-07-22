@@ -388,14 +388,14 @@ Midway3 and Beagle3 login nodes — no need to bounce through Midway3 for cross-
 
 ### The 5 systems
 
-| Name | Protein content | Lipid composition | Status (July 22) |
+| Name | Protein content | Lipid composition | Status (July 22, end of day) |
 |---|---|---|---|
-| `control` | none (membrane-only baseline) | Composition #1 | Production, 39.53 ns; running (4 GPU resident, looping, no cap) |
-| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 10.05 ns; running (2 GPU resident, looping, capped at 20 ns, then GaMD 2-GPU offload) |
-| `dome-bact` | dome only | Composition #2 | Production, 12.0 ns; running (2 GPU resident, looping, capped at 20 ns, then GaMD 2-GPU offload) |
-| `full-model` | full dome + FtsH | Composition #1 | Production, 1.05 ns; running (1 GPU offload, looping) |
-| `full-bact` | full dome + FtsH | Composition #2 | Production, 0.05 ns; running (1 GPU offload, looping) |
-| `martini-dome` (optional) | dome only CG | Composition #1 | Staged: CHARMM-GUI 8458753726 (AA) → Martini conversion → GROMACS (ready to run July 23) |
+| `control` | none (membrane-only baseline) | Composition #1 | Production, 51.53 ns; running (4 GPU resident, looping, no cap). Next block pending in queue (job 52525060) |
+| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | **20.05 ns — hit the cap.** Conventional MD done; GaMD equilibration job **52527113** (4 GPU offload) queued, not yet started |
+| `dome-bact` | dome only | Composition #2 | **20.0 ns — hit the cap.** Conventional MD done; GaMD equilibration job **52527114** (4 GPU offload) queued, not yet started |
+| `full-model` | full dome + FtsH | Composition #1 | Production, 12.05 ns; running (1 GPU offload, looping) |
+| `full-bact` | full dome + FtsH | Composition #2 | Production, 4.05 ns; running (1 GPU offload, looping) |
+| `martini-dome` (optional) | dome only CG (24-chain Martini 3 protein) | DPPE 70% / POPG 15% / DOPG 15% (cardiolipin fraction redistributed — see below) | **Built and validated.** Energy minimization job **52534609** queued on Beagle3, not yet started |
 
 **Production now LOOPS within a job (as of July 20).** `run_prod_gpu.sh` was rewritten to run sequential
 1 ns chunks until the wall-time allocation is nearly used (or a per-job 12-chunk cap), matching Rajiv's
@@ -417,7 +417,14 @@ See progress log.
 - **GaMD equilibration timeline for dome systems** (52 ns target): ~26 days wall-clock, running both `dome-model` and `dome-bact` GaMD in parallel on separate 2-GPU allocations.
 - **Recommendation**: Launch both dome GaMD runs on 2 GPU / 16 PE offload (Rajiv's templates used 1 GPU; bumping to 2 saves ~one week per system).
 
-**Martini CG comparison system** (optional, July 22 decision): CHARMM-GUI Membrane Builder job 8458753726 builds a full-dome-only CG system in Martini 3. **Engine choice: GROMACS** (all-atom protein + CG membrane via Martini's AA-to-CG conversion). Rationale: Martini delivers ~7–10 ns/day speedup vs AA (worth a speed sanity check), but the lipid specificity is lost at the CG membrane level — protein binds a featureless blob rather than individual lipids. This tradeoff is acceptable for a *comparison* run (asks: does coarse-grained lipid dynamics even show opening?), not a replacement of the AA results. **Not in the primary analysis path**, but keeps the option open.
+**Martini CG comparison system** (optional, July 22 decision): full dome-only system (protein AND membrane
+both coarse-grained to Martini 3 — not a mixed AA-protein/CG-membrane hybrid; that hybrid approach was
+considered and rejected, see GaMD-vs-coarse-graining discussion above) built via `martinize2` + `insane`
+(CHARMM-GUI's Martini Bilayer Maker turned out unable to handle a system this size — see full pipeline
+under "Martini 3 CG Dome System" below). Rationale: Martini delivers ~50× speedup vs AA (worth a speed
+sanity check), but lipid specificity is lost — CG beads represent lipid classes, not individual atoms.
+This tradeoff is acceptable for a *comparison* run (does CG dynamics show opening at all?), not a
+replacement of the AA results. **Not in the primary analysis path**, but keeps the option open.
 
 **Composition #1** ("generic model"): DPPE 70% / POPG 12.5% / DOPG 12.5% / LOACL1 2.5% / TLCL1 2.5%.
 Matches the textbook whole-cell/bulk *E. coli* inner-membrane average (~70-80% PE, ~20-25% PG, ~5% CL)
@@ -445,25 +452,156 @@ composition-#1-vs-#2 comparison isn't confounded by a different protein build.
 - `dome-model` — still `/project2/haddadian/junseo/beagle3-jobs/domeonly_equil/` (move deferred — has a live production job; don't rename a directory a running SLURM job has as its WorkDir)
 - `full-model` — still `/project2/haddadian/junseo/beagle3-jobs/full_equil/` (move deferred — production being launched here; see first-production-block transition note above)
 
-### Martini 3 CG Dome System — Optional Comparison (ready to run July 23, 2026)
+### Beagle3 job queue snapshot — July 22, 2026, end of day (verify at next session start)
 
-**Purpose**: Speed sanity-check on CG dynamics (does dome opening happen at all in Martini?) — complementary to primary AA-only path, not replacement.
+All ten jobs below were the full `squeue -u junseo` output at session close. Re-check status first thing
+next session — several were still queued (not yet started) when this was written.
 
-**Workflow** (ready-to-execute scripts in `scripts/`):
-1. CHARMM-GUI job 8458753726 (AA dome, CHARMM36m) downloads → `step5_input.pdb/.psf`
-2. `bash scripts/convert_charmm_to_martini.sh step5_input.pdb` → `dome_martini.gro/.top` (uses martinize2 or fallback to online server)
-3. `gmx grompp -f scripts/martini_md_template.mdp -c dome_martini.gro -p dome_martini.top -o dome.tpr`
-4. `sbatch scripts/run_martini_gromacs_template.sbatch` → GROMACS on Beagle3 (2 GPU A100, ~1 hr runtime)
+**Running:**
+| Job ID | Name | Elapsed | What it is |
+|---|---|---|---|
+| 52524206 | full-bact-prod | ~5h | Normal `full-bact` production loop (1 GPU offload) |
+| 52465073 | full-model-prod | ~1d 6h | Normal `full-model` production loop (1 GPU offload) |
 
-**Files**:
-- `MARTINI_WORKFLOW.md` — comprehensive guide (AA→CG conversion, setup, analysis)
-- `scripts/convert_charmm_to_martini.sh` — automated conversion with fallbacks
-- `scripts/martini_md_template.mdp` — GROMACS config (Martini 3, NPT, 10 fs, CG optimized)
-- `scripts/run_martini_gromacs_template.sbatch` — Beagle3 job template
+**Pending (queued, not yet started — check `squeue`/`sacct` next session):**
+| Job ID | Name | Purpose | Next action if it fails again |
+|---|---|---|---|
+| 52525060 | control-prod | Normal `control` production continuation | Resubmit from `control/` dir if it drops out of queue |
+| 52527113 | gamd-dome-model-equil | `dome-model` GaMD equilibration, 4 GPU offload (the fix for the 2 ns/day speed problem — expected ~6.4 ns/day per Rajiv's validated config) | If it fails, check `.err` for margin/config issues before assuming the 4-GPU fix itself is wrong |
+| 52527114 | gamd-dome-bact-equil | Same as above for `dome-bact` | Same |
+| 52534069 | gamd-bench-1gpu | NAMD GaMD speed benchmark (1 GPU), part of the original speed-sweep — was one of 5 jobs that failed earlier this session from missing `step5_input.str`/`toppar`/restart files in `gamd_benchmark/`; fixed by symlinking them in from the parent `namd/` dir | If it fails again, check `gamd_benchmark/bench-1gpu_*.err` — the symlink fix should hold, so a new failure means a genuinely new issue |
+| 52534070 | gamd-bench-2gpu | Same benchmark, 2 GPU | Same |
+| 52534071 | gamd-bench-3gpu | Same benchmark, 3 GPU | Same |
+| 52524799 | gamd-bench-4gpu | Same benchmark, 4 GPU — this one was queued *before* today's session and never actually ran yet, so it never hit the missing-file crash, but shares the same (now-fixed) `gamd_benchmark/` directory, so it should be fine when it starts | Same |
+| 52534074 | openmm-bench-2fs | OpenMM plain-MD (non-GaMD) 2fs speed benchmark — originally failed on a missing `step6.6_equilibration.pdb`; fixed by generating it via MDAnalysis from the NAMD binary restart coords, adding the full CHARMM `toppar/` parameter set to the script (was missing entirely — `createSystem()` needs `params`), and setting the real box vectors (296.94×296.94×194.87 Å) instead of relying on a broken/unitary CRYST1 | If it fails, check `bench_openmm_2fs_*.err` on Beagle3 (`/project2/haddadian/junseo/beagle3-jobs/domeonly_equil_openmm/openmm/`) |
+| 52534068 | gamd-openmm-bench | **Real** OpenMM GaMD benchmark using the actual Miao Lab `gamd-openmm` package (installed this session via `pip install --user` after `git clone` on Beagle3's login node — the original script's `mm.GaussianAccelerationGroupForce()` call was calling a class that doesn't exist anywhere in OpenMM; confirmed via `hasattr(openmm, ...)` before concluding this). Driven by `gamd_benchmark.xml` (staged production: 1000 conventional-MD-prep + 1000 conventional-MD + 1000 GaMD-eq-prep + 1000 GaMD-eq + 50000 GaMD-production steps, `lower-dual` boost, sigma0 6.0/6.0 kcal/mol matching Rajiv's NAMD config) | If it fails, check `gamd_openmm_bench_*.err` in the same `openmm/` dir — first thing to verify is whether the XML's box-vectors/parameter file paths still resolve correctly |
+| 52534609 | martini-dome-em | Martini CG system energy minimization (first ever run of the new pipeline — see "Martini 3 CG Dome System" section below) | If it fails, do **not** run `gmx mdrun` directly on the login node to debug (segfaults immediately, no GPU) — always via `sbatch`. Check `em_*.err`/`em_*.out` in `/scratch/beagle3/junseo/martini-dome-cg/` |
 
-**Timeline**: Setup July 22; run July 23 after CHARMM-GUI finishes; analysis July 23–24.
+**Two incidents already fixed this session, for context**: the `gamd_benchmark/1gpu/2gpu/3gpu` jobs were
+missing `step5_input.str`, `step5_input.psf/.pdb`, `toppar/`, and `step7_20.restart.*` in their working
+directory (all present in the parent `namd/` dir, just never copied/symlinked in) — fixed via symlinks.
+The `openmm-bench-2fs` and `gamd-openmm-bench` jobs both needed a real equilibrated PDB that never
+existed in that directory (only NAMD binary `.coor`/`.psf` did) — generated via MDAnalysis
+(`u = mda.Universe(psf, coor, format='NAMDBIN'); u.atoms.write(pdb)`), which also required box
+dimensions read from the `.xsc` restart file since MDAnalysis writes a unitary placeholder `CRYST1`
+otherwise.
 
-**Tradeoff note**: Martini CG gives ~50× speedup vs AA (dome-model production: 2 ns/day → ~50 ps/hour CG), but lipid specificity is lost at the CG membrane level (all-atom protein sees a featureless CG blob instead of individual lipids). Useful for ruling out "dome doesn't open in any lipid environment," but not for the mechanistic question (which lipids drive opening?).
+### Martini 3 CG Dome System — Optional Comparison (built July 22, 2026 — EM queued)
+
+**Purpose**: Speed sanity-check on CG dynamics (does dome opening happen at all in Martini?) — complementary
+to primary AA-only path, not replacement. ~50× speedup vs AA once past minimization, but lipid specificity
+is lost at the CG membrane level. Useful for ruling out "dome doesn't open in any lipid environment," not
+for the mechanistic (which-lipids-drive-opening) question.
+
+**CHARMM-GUI's Martini Bilayer Maker turned out not to be usable for this system, and this is a hard
+limit, not a bug to work around**: its upload field is explicitly "Upload All-atom PDB File" — there
+is no path to hand it an already-converted CG structure. It does the AA→CG conversion itself internally
+(calling `martinize2`), and for any system this size (1.7M AA atoms) that internal step re-writes
+a PDB that overflows the format's 5-digit atom-serial field (>99,999 atoms → literal `*****` written into
+the file → `martinize2` crashes on `int('*****')`). This happens identically whether you upload PDB or
+mmCIF, since CHARMM-GUI's backend still funnels through its own internal PDB writer regardless of
+upload format. **This is why the actual working pipeline below bypasses CHARMM-GUI's Martini tools
+entirely** and does both the AA→CG protein conversion and the membrane-building ourselves.
+
+**The actual reproducible pipeline** (apply this to any future system needing Martini CG conversion):
+
+1. **Get per-chain protein PDBs.** CHARMM-GUI's GROMACS FF-Converter output (a *different, already-working*
+   CHARMM-GUI tool — not the Martini Bilayer Maker) writes one PDB per protein segment automatically:
+   `<name>_proa.pdb`, `_prob.pdb`, ... one per chain (e.g. `dome_m3_af3_ic_minimized_final_noftsh_proa.pdb`
+   through `_prox.pdb` for our 24-chain dome, ~5,300 atoms each — comfortably under any format limit).
+   If a system doesn't have these already, split the AA structure into per-chain PDBs manually (VMD
+   `[atomselect ... "chain X"]` + `writepdb`, or MDAnalysis) before conversion — **never feed martinize2 a
+   whole multi-hundred-thousand-atom system directly**, even via `.gro` (see gotcha below).
+
+2. **Set up a local Docker environment** (avoids all cluster/local pip version-conflict and
+   auth issues — see gotchas). Build once:
+   ```dockerfile
+   FROM continuumio/miniconda3
+   RUN pip install polyply vermouth -q
+   RUN pip install "git+https://github.com/Tsjerk/Insane.git" -q
+   ```
+   `docker build -t martinize2-local .` — this image now has both `martinize2` (via vermouth) and
+   `insane` (the actual membrane-builder tool; see gotcha — it's a pip-git package, not a loose script).
+
+3. **Convert each chain separately**, looping over all chain PDBs:
+   ```bash
+   docker run --rm -v <host-dir>:/data -w /data/martini_chains martinize2-local \
+     martinize2 -f /data/<chain>.pdb -o chain_X.top -x chain_X_cg.pdb \
+       -name chain_X -ff martini3001 -p backbone -maxwarn 100
+   ```
+   **Must set `-w` (container working directory) to the intended output folder** — `martinize2` writes
+   its `.itp` file(s) relative to CWD, not relative to `-o`/`-x`'s path, so without `-w` the `.itp` lands
+   inside the ephemeral container and is lost when `--rm` destroys it. `-name chain_X` also controls the
+   `.itp` filename (written as `chain_X_0.itp`) — needed for unique per-chain naming.
+
+4. **Combine the 24 CG chain PDBs into one composite structure.** Verified empirically: `martinize2`
+   preserves the *original absolute coordinate frame* (checked chain A's first residue CA vs its BB bead
+   — matched to within Martini's normal mapping tolerance), so chains can be concatenated directly with
+   sequential atom renumbering — no re-superposition needed.
+
+5. **Download the official Martini 3 lipid parameters** — NOT from the generic `marrink-lab/martini-forcefields`
+   repo (only has 3 unrelated lipid types). The real, comprehensive lipidome lives at
+   `Martini-Force-Field-Initiative/M3-Lipid-Parameters` on GitHub, under `ITPs/`. Files needed:
+   - `martini_v3.0.0.itp` — core bead types / nonbonded parameters
+   - `martini_v3.0.0_ffbonded_v2.itp` — **easy to forget** — defines the named bond/angle macros
+     (`b_PO4_GL_def`, etc.) that the lipid `.itp` files reference; omitting it causes `gmx grompp`
+     to fail with "No default Bond types" for every lipid bond
+   - `martini_v3.0.0_phospholipids_PE_v2.itp`, `_PG_v2.itp` — headgroup-specific lipid definitions
+   - `martini_v3.0.0_solvents_v1.itp` (Martini water, bead name `W`), `martini_v3.0.0_ions_v1.itp` (`NA`/`CL`)
+
+6. **Handle missing lipid types** (check by grepping for `M3.<NAME>` in `insane`'s own
+   `lipids.dat` before assuming a lipid is supported):
+   - `DPPE` has no Martini-3 shape template in `insane` (`lipids.dat` has DLPE/DUPE/DMPE/POPE/PAPE
+     but not the fully-saturated PE). Fixed by copying `M3.DPPG`'s identical saturated C4 tail
+     layout and swapping only the headgroup bead (`GL0`→`NH3`) and charge (`-1`→`0`) to match the real
+     `martini_v3.0.0_phospholipids_PE_v2.itp` DPPE parameters — fed to `insane` via a custom `-dat` file.
+   - **Cardiolipin has no Martini 3 shape template in `insane` at all** (only Martini-2-era `M2.CDL0/1/2`,
+     explicitly commented "Warning not the same names is in .itp" in `lipids.dat`). Rather than hand-derive
+     an untested custom 19-bead template under time pressure, the cardiolipin fraction (5% total:
+     2.5% LOACL1 + 2.5% TLCL1 in Composition #1) was **redistributed into POPG/DOPG** (already 1:1),
+     giving this CG system DPPE 70% / POPG 15% / DOPG 15% instead of the real 5-lipid mix.
+     **This is a documented approximation specific to the comparison run — flag it in any writeup.**
+     If cardiolipin ever needs to be exact, the Martini 3 bead layout is fully known (from
+     `martini_v3.0.0_phospholipids_CL_v2.itp`'s `TMCL`/`TOCL` entries) and a proper `insane`
+     shape-template could be hand-built from it — just wasn't worth the risk this session.
+
+7. **Build the full system**:
+   ```bash
+   insane -f dome_protein_cg_combined.pdb -o system.gro -p system.top \
+     -dat custom_lipids.dat -pbc rectangular -x <box-x-nm> -y <box-y-nm> -z <box-z-nm> \
+     -l DPPE:70 -l POPG:15 -l DOPG:15 -sol W -salt 0.15 -ff M3
+   ```
+   Box dimensions should match the original AA system's equilibrated box (read from the NAMD `.xsc`
+   restart file, in Å → convert to nm) for a fair comparison.
+
+8. **Fix the topology's protein section.** `insane` only knows the protein as one opaque input
+   structure and writes a placeholder `Protein  1` line — it has no idea our system is actually 24
+   separate moleculetypes. Manually replace this with `#include` lines for all 24 chain `.itp` files
+   plus 24 `chain_X_0    1` molecule entries, **in the same order the chains were concatenated** (verify
+   this against the `.gro` file's atom-count boundaries between chains — residue numbering resets to 1
+   at each chain boundary and is a good sanity check).
+
+9. **Validate with `gmx grompp` before trusting anything** — this is what caught the missing
+   `ffbonded` file. A clean run (only a performance NOTE about PME mesh load, zero ERRORs) means the
+   topology is real and internally consistent.
+
+10. **Run on a compute node, never the login node.** `gmx mdrun` segfaults immediately on Beagle3's
+    login nodes (no GPU, and RCC actively discourages compute there) — always submit via `sbatch`,
+    even for a quick energy-minimization test.
+
+**Files** (this session's build, local + Beagle3 `/scratch/beagle3/junseo/martini-dome-cg/`):
+- `dome_martini_system.gro` / `.top` — final system (135,760 CG beads: 18,264 protein / ~1,654 lipids /
+  95,580 water / 2,104 ions)
+- `martini_chains/chain_*_0.itp` — 24 individual protein chain topologies
+- `martini_ff/*.itp` — 6 official Martini 3 parameter files (core, ffbonded, PE, PG, solvents, ions)
+- `em.mdp` / `md.mdp` — energy minimization / 10 fs production configs
+- `em.tpr` — validated, ready to minimize (job 52534609, queued as of session close)
+
+**Not yet done / next steps**: confirm EM converges (check `em.log` for "Steepest Descents converged"),
+then `gmx grompp -f md.mdp -c em.gro -p dome_martini_system.top -o dome.tpr` and submit production via
+`run_martini_gromacs.sbatch`. VMD visualization needs `em.gro` (post-minimization) rather than the raw
+`insane` output, since `.gro` has no bond connectivity and the pre-minimization structure has close
+contacts that read as visual clashes.
 
 ### NAMD vs OpenMM — decided (NAMD wins)
 

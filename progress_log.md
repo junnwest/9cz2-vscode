@@ -31,6 +31,105 @@
 
 ---
 
+## July 22, 2026 (continued) — 5 stalled benchmark jobs root-caused, real Martini 3 CG dome system built end-to-end
+
+**Context**: dome-model/dome-bact hit their 20 ns conventional-MD cap today, so GaMD equilibration was
+launched (4-GPU offload, jobs 52527113/52527114 — the config fix expected to recover ~6.4 ns/day per
+Rajiv's validated template). Noticed the Beagle3 queue had shrunk from 11 jobs to 6 over ~30 min —
+investigated and found 5 jobs (3× NAMD GaMD speed-sweep benchmarks, 1× OpenMM plain-MD benchmark, 1×
+OpenMM "GaMD" benchmark) had all silently `FAILED` shortly after submission.
+
+**All 5 failures root-caused via `sacct`/`.err` files, not guessed at:**
+- **3× `gamd-bench-{1,2,3}gpu`** (NAMD): `FATAL ERROR: couldn't read file "step5_input.str"`. Their
+  working directory (`domeonly_equil/namd/gamd_benchmark/`) was missing `step5_input.str`,
+  `step5_input.psf/.pdb`, `toppar/`, and the `step7_20.restart.*` files it restarts from — all present
+  one directory up in `namd/`, just never copied/symlinked in when the benchmark dir was set up. Fixed
+  by symlinking all of them in from the parent directory; resubmitted as 52534069/70/71.
+- **`openmm-bench-2fs`**: `FileNotFoundError` for `step6.6_equilibration.pdb` (and its fallback
+  `step5_input.pdb`) — neither ever existed in that OpenMM working directory, which only had NAMD's
+  binary `.psf`/`.crd`/`.coor` files, no PDB. Generated the missing PDB properly via MDAnalysis
+  (`mda.Universe(psf, restart.coor, format='NAMDBIN')` → `.write(pdb)`), reading real box dimensions from
+  the NAMD `.xsc` restart file first (MDAnalysis otherwise writes a placeholder unitary `CRYST1`, which
+  would silently break PME). Also found and fixed a second, unraised bug while doing this: the benchmark
+  script never passed a `CharmmParameterSet` to `psf.createSystem()` at all — it would have crashed on
+  that call too, just further down, since PSF-format topology has no force-field parameters embedded.
+  Rewrote the script with the full CHARMM `toppar/` file list and the real box vectors.
+- **`gamd-openmm-bench`**: crashed calling `mm.GaussianAccelerationGroupForce()`. Verified directly —
+  `hasattr(openmm, 'GaussianAccelerationGroupForce')` → `False` on Beagle3's actual OpenMM install — this
+  class does not exist anywhere in stock OpenMM; the original benchmark script (written earlier this
+  session, before checking) assumed a one-line library call that was never real. **User correctly pushed
+  back** on the initial conclusion "GaMD is impossible in OpenMM" — checked further and found the Miao
+  Lab (same lab behind NAMD's GaMD) publishes a real, separate, pip-installable package,
+  `github.com/MiaoLab20/gamd-openmm`, implementing dual/dihedral/total boost via `CustomCVForce` and a
+  CLI tool (`gamdRunner`) driven by an XML config — not a bare Force class. Installed it on Beagle3
+  (`pip install --user`, after fixing an `mdtraj`/`versioneer` build conflict by installing dependencies
+  via prebuilt wheels first), wrote a matching XML config (`lower-dual` boost, sigma0 6.0/6.0 kcal/mol —
+  same as Rajiv's NAMD config — staged as 1000+1000+1000+1000 prep/eq steps + 50,000-step GaMD-production
+  for the actual speed measurement), resubmitted as 52534068.
+- **Lesson for future benchmark setups**: always stage a benchmark subdirectory with symlinks to its full
+  dependency set (topology, restart, parameter files) *and* smoke-test the script's imports/API calls
+  before submitting to the queue — none of these 5 failures were physics problems, all were "the job
+  never actually had what it needed to start."
+
+**Real Martini 3 CG dome system built, fully from scratch, end-to-end — first successful attempt this
+summer.** Prior sessions' attempts (CHARMM-GUI Martini Bilayer Maker, direct `martinize2` on the full
+solvated system) both failed; this time the failure modes were root-caused precisely enough to build a
+real working alternative:
+- **CHARMM-GUI's Martini Bilayer Maker cannot handle this system, confirmed as a hard limit, not a
+  bug**: its input is explicitly labeled "Upload All-atom PDB File" — no path exists to hand it an
+  already-CG structure. It always does its own internal AA→CG conversion, and for a >99,999-atom system
+  that conversion's internal PDB write hits the 5-digit atom-serial format limit and writes literal
+  `*****`, crashing `martinize2` with `ValueError: invalid literal for int() with base 10: '*****'`.
+  Confirmed this happens identically for both PDB and mmCIF uploads (CHARMM-GUI's backend still funnels
+  through its own PDB writer either way).
+- **Direct `martinize2` on the full 1.7M-atom solvated `.gro` file does NOT hit that atom-count wall**
+  (GRO format doesn't have PDB's hard serial-number cutoff) — it processed the *entire* system cleanly
+  through graph-building, coordinate-averaging, and topology-writing — but crashed at the very last step,
+  `ValueError: No molecule in the system. Nothing to write.` Root cause: `martinize2` is a protein-only
+  converter; every one of the ~370,000 TIP3 water molecules (and presumably every lipid) got silently
+  rejected with `Cannot recognize residue 'TIP3'... Deleting the molecule`, leaving nothing to write once
+  all non-protein content was stripped.
+- **Working solution**: convert the protein only, per chain (CHARMM-GUI's GROMACS FF-Converter output
+  had already split it into 24 single-chain PDBs, ~5,300 atoms each — comfortably small), then build the
+  CG membrane separately around the resulting CG protein using `insane` (Marrink lab's own
+  membrane-builder tool, a real pip-installable package from `github.com/Tsjerk/Insane`, not the loose
+  single-file script an older tutorial might suggest).
+- Used a local Docker container (`continuumio/miniconda3` + `pip install polyply vermouth` +
+  `pip install git+https://github.com/Tsjerk/Insane.git`) to avoid the local-pip/cluster-conda version
+  conflicts and auth issues that blocked every earlier direct-install attempt this session.
+- All 24 chains converted successfully (18,264 total CG beads, down from ~127,500 AA atoms). Verified
+  `martinize2` preserves the original absolute coordinate frame (checked chain A's first residue CA vs
+  its CG BB bead — matched), so all 24 chains could be concatenated directly with no re-superposition.
+- Found the official Martini 3 lipid parameter library is a *separate* GitHub org/repo,
+  `Martini-Force-Field-Initiative/M3-Lipid-Parameters` — not the generic `martini-forcefields` repo
+  (which only has 3 unrelated lipid types). Downloaded the 6 needed files (core FF, the easy-to-forget
+  `ffbonded` bond/angle-macro file, PE/PG phospholipids, solvents, ions).
+- Two lipid gaps found and handled: **`DPPE`** has no Martini-3 shape template in `insane`'s bundled
+  `lipids.dat` (only unsaturated PE variants exist) — built a custom entry by copying `DPPG`'s identical
+  saturated-tail layout and swapping just the headgroup bead/charge to match DPPE's real parameters, fed
+  via `insane`'s `-dat` flag. **Cardiolipin has no Martini-3 template in `insane` at all** (only
+  Martini-2-era entries, explicitly marked incompatible with the real M3 `.itp` bead names) — rather than
+  hand-build an unvalidated custom 19-bead template under time pressure, redistributed its 5% (LOACL1 +
+  TLCL1) into POPG/DOPG, giving this CG system DPPE 70%/POPG 15%/DOPG 15% instead of the real 5-lipid mix.
+  **Documented as a known simplification, not silently absorbed.**
+- Built the full system with `insane` (135,760 CG beads: 18,264 protein / ~1,654 lipids / 95,580 water /
+  2,104 ions, correctly neutralized — 1,335 Na⁺ / 769 Cl⁻ against a −566 net charge). Had to manually
+  rewrite the topology's protein section afterward: `insane` only understands the protein as one opaque
+  input blob and writes a placeholder `Protein  1` molecule line — replaced with the real 24 separate
+  `chain_X_0` moleculetypes, in the same order the chains were concatenated (cross-checked against the
+  `.gro` file's per-chain residue-numbering reset at each chain boundary).
+- **Validated with `gmx grompp`** on Beagle3 before trusting any of it — first pass surfaced the missing
+  `ffbonded` file (every lipid bond errored "No default Bond types"); second pass, after adding it, came
+  back completely clean (only a PME-mesh-load performance note, zero errors). `em.tpr` generated.
+- First `gmx mdrun` attempt was run directly on the Beagle3 login node (habit from thinking of it as "just
+  testing") and segfaulted immediately — login nodes have no GPU and RCC doesn't support compute there.
+  Wrote a proper `run_em.sbatch`, resubmitted correctly as job 52534609.
+- **Full reproducible pipeline (all 10 steps, every gotcha) written into CLAUDE.md** under "Martini 3 CG
+  Dome System" specifically so this doesn't need to be re-derived from scratch if CG is later run on the
+  other 4 systems.
+
+---
+
 ## July 17–20, 2026 — Days 36–39
 
 **FtsH resident-mode crash fully diagnosed → FtsH systems run OFFLOAD**
