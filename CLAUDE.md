@@ -410,6 +410,14 @@ couples the protein–lipid *interface* only at CG resolution (loses the lipid-s
 depends on) and is documented to over-stabilize protein conformational dynamics — the exact thing we study.
 See progress log.
 
+**GaMD technical notes (verified July 22, 2026):**
+- **Resident mode is incompatible with GaMD** (tested, job 52473685: NAMD FATAL-errors at startup with `GPUresident is incompatible with... accelMD` and related options). The fast ~8 ns/day resident production is off the table — GaMD structurally requires offload mode.
+- **2-GPU offload GaMD benchmark** (job 52473718): 0.0844 s/step = **~2.0 ns/day** (1.28× speedup over 1 GPU). Scaling is moderate (GaMD boost overhead doesn't parallelize as cleanly as plain dynamics), but real.
+- **GaMD equilibration timeline for dome systems** (52 ns target): ~26 days wall-clock, running both `dome-model` and `dome-bact` GaMD in parallel on separate 2-GPU allocations.
+- **Recommendation**: Launch both dome GaMD runs on 2 GPU / 16 PE offload (Rajiv's templates used 1 GPU; bumping to 2 saves ~one week per system).
+
+**Martini CG comparison system** (optional, July 22 decision): CHARMM-GUI Membrane Builder job 8458753726 builds a full-dome-only CG system in Martini 3. **Engine choice: GROMACS** (all-atom protein + CG membrane via Martini's AA-to-CG conversion). Rationale: Martini delivers ~7–10 ns/day speedup vs AA (worth a speed sanity check), but the lipid specificity is lost at the CG membrane level — protein binds a featureless blob rather than individual lipids. This tradeoff is acceptable for a *comparison* run (asks: does coarse-grained lipid dynamics even show opening?), not a replacement of the AA results. **Not in the primary analysis path**, but keeps the option open.
+
 **Composition #1** ("generic model"): DPPE 70% / POPG 12.5% / DOPG 12.5% / LOACL1 2.5% / TLCL1 2.5%.
 Matches the textbook whole-cell/bulk *E. coli* inner-membrane average (~70-80% PE, ~20-25% PG, ~5% CL)
 closely — this was the project's original/default composition before the two-lipid-comp plan existed.
