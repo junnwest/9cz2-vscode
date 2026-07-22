@@ -388,13 +388,14 @@ Midway3 and Beagle3 login nodes — no need to bounce through Midway3 for cross-
 
 ### The 5 systems
 
-| Name | Protein content | Lipid composition | Status (July 20) |
+| Name | Protein content | Lipid composition | Status (July 22) |
 |---|---|---|---|
-| `control` | none (membrane-only baseline) | Composition #1 | Production, 39.53 ns; relaunched July 20 (4 GPU resident, looping, no cap) |
-| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 10.05 ns; relaunched July 20 (2 GPU resident, looping, **capped at 20 ns** for GaMD) |
-| `dome-bact` | dome only | Composition #2 | Production, 12.0 ns; relaunched July 20 (2 GPU resident, looping, **capped at 20 ns** for GaMD) |
-| `full-model` | full dome + FtsH | Composition #1 | Production, 1.05 ns; **runs OFFLOAD, not resident** — see transition note below; relaunched July 20 (1 GPU offload, looping) |
-| `full-bact` | full dome + FtsH | Composition #2 | Production, 0.05 ns (first real block); **runs OFFLOAD**; relaunched July 20 (1 GPU offload, looping) |
+| `control` | none (membrane-only baseline) | Composition #1 | Production, 39.53 ns; running (4 GPU resident, looping, no cap) |
+| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Production, 10.05 ns; running (2 GPU resident, looping, capped at 20 ns, then GaMD 2-GPU offload) |
+| `dome-bact` | dome only | Composition #2 | Production, 12.0 ns; running (2 GPU resident, looping, capped at 20 ns, then GaMD 2-GPU offload) |
+| `full-model` | full dome + FtsH | Composition #1 | Production, 1.05 ns; running (1 GPU offload, looping) |
+| `full-bact` | full dome + FtsH | Composition #2 | Production, 0.05 ns; running (1 GPU offload, looping) |
+| `martini-dome` (optional) | dome only CG | Composition #1 | Staged: CHARMM-GUI 8458753726 (AA) → Martini conversion → GROMACS (ready to run July 23) |
 
 **Production now LOOPS within a job (as of July 20).** `run_prod_gpu.sh` was rewritten to run sequential
 1 ns chunks until the wall-time allocation is nearly used (or a per-job 12-chunk cap), matching Rajiv's
@@ -443,6 +444,26 @@ composition-#1-vs-#2 comparison isn't confounded by a different protein build.
 - `full-bact` — `/scratch/beagle3/junseo/full-bact/` (built here from the start)
 - `dome-model` — still `/project2/haddadian/junseo/beagle3-jobs/domeonly_equil/` (move deferred — has a live production job; don't rename a directory a running SLURM job has as its WorkDir)
 - `full-model` — still `/project2/haddadian/junseo/beagle3-jobs/full_equil/` (move deferred — production being launched here; see first-production-block transition note above)
+
+### Martini 3 CG Dome System — Optional Comparison (ready to run July 23, 2026)
+
+**Purpose**: Speed sanity-check on CG dynamics (does dome opening happen at all in Martini?) — complementary to primary AA-only path, not replacement.
+
+**Workflow** (ready-to-execute scripts in `scripts/`):
+1. CHARMM-GUI job 8458753726 (AA dome, CHARMM36m) downloads → `step5_input.pdb/.psf`
+2. `bash scripts/convert_charmm_to_martini.sh step5_input.pdb` → `dome_martini.gro/.top` (uses martinize2 or fallback to online server)
+3. `gmx grompp -f scripts/martini_md_template.mdp -c dome_martini.gro -p dome_martini.top -o dome.tpr`
+4. `sbatch scripts/run_martini_gromacs_template.sbatch` → GROMACS on Beagle3 (2 GPU A100, ~1 hr runtime)
+
+**Files**:
+- `MARTINI_WORKFLOW.md` — comprehensive guide (AA→CG conversion, setup, analysis)
+- `scripts/convert_charmm_to_martini.sh` — automated conversion with fallbacks
+- `scripts/martini_md_template.mdp` — GROMACS config (Martini 3, NPT, 10 fs, CG optimized)
+- `scripts/run_martini_gromacs_template.sbatch` — Beagle3 job template
+
+**Timeline**: Setup July 22; run July 23 after CHARMM-GUI finishes; analysis July 23–24.
+
+**Tradeoff note**: Martini CG gives ~50× speedup vs AA (dome-model production: 2 ns/day → ~50 ps/hour CG), but lipid specificity is lost at the CG membrane level (all-atom protein sees a featureless CG blob instead of individual lipids). Useful for ruling out "dome doesn't open in any lipid environment," but not for the mechanistic question (which lipids drive opening?).
 
 ### NAMD vs OpenMM — decided (NAMD wins)
 

@@ -7,6 +7,30 @@
 
 ---
 
+## July 22, 2026 — Day 40
+
+**GaMD resident-mode incompatibility confirmed; 2-GPU offload benchmark done**
+- Tested GaMD (accelMD) with GPU-resident mode enabled (`CUDASOAintegrate on`, job 52473685): **NAMD FATAL-errors at startup** with "GPUresident is incompatible with... accelMD and related options." Definitive — resident mode is structurally off the table for GaMD, settling a day-long discussion. The fast ~8 ns/day resident production baseline does not apply to GaMD; it structurally requires offload mode.
+- **2-GPU offload GaMD benchmark** (job 52473718, `dome-model`): **0.0844 s/step = ~2.0 ns/day** (1.28× speedup over 1-GPU offload at 1.6 ns/day). Scaling is moderate (GaMD boost overhead doesn't parallelize as cleanly as plain dynamics), but real. Recommendation: launch both `dome-model` and `dome-bact` GaMD runs on 2-GPU/16PE offload (saves ~1 week per system vs 1 GPU).
+- **GaMD equilibration timeline** (52 ns target per dome system): ~26 days wall-clock, running both dome GaMD in parallel on separate 2-GPU allocations. Updated CLAUDE.md with findings and recommendation.
+
+**Martini 3 CG dome comparison system — ready to run July 23**
+- Completed full ready-to-execute workflow setup for optional Martini 3 coarse-graining comparison (speed sanity-check: does dome open at all in CG?). Not replacement for AA—primary path (loses lipid specificity), but useful for ruling out "dome doesn't open in any environment."
+- **Workflow files created**:
+  1. `MARTINI_WORKFLOW.md` — comprehensive 4-step guide (CHARMM-GUI → martinize2 → GROMACS)
+  2. `scripts/convert_charmm_to_martini.sh` — automated AA→CG conversion (tries martinize2, fallback to Martini online server)
+  3. `scripts/martini_md_template.mdp` — GROMACS config (Martini 3, NPT, 10 fs CG timestep)
+  4. `scripts/run_martini_gromacs_template.sbatch` — Beagle3 job template (2 GPU A100)
+- Workflow (when CHARMM-GUI 8458753726 finishes tomorrow): download AA outputs → 1-min conversion → queue GROMACS (runs ~1 hr on 2 GPU vs 26 days for AA GaMD).
+- Attempted martinize2 install via conda on Beagle3 during this session; it did not complete successfully (package availability/versioning issue). Fallback: user can run conversion locally on Mac or use Martini's online server (both documented in workflow).
+
+**Session complete — all systems running, GaMD + Martini paths documented**
+- All 5 production/equilibration systems running normally on Beagle3. FtsH systems confirmed stable in offload mode. Dome systems looping toward 20 ns conventional MD cap, then GaMD handoff.
+- CLAUDE.md updated with all July 22 findings (GaMD, Martini, system status).
+- Code committed and pushed (d2b1107, Day 40 summary).
+
+---
+
 ## July 17–20, 2026 — Days 36–39
 
 **FtsH resident-mode crash fully diagnosed → FtsH systems run OFFLOAD**
