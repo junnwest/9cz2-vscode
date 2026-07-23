@@ -452,39 +452,65 @@ composition-#1-vs-#2 comparison isn't confounded by a different protein build.
 - `dome-model` — still `/project2/haddadian/junseo/beagle3-jobs/domeonly_equil/` (move deferred — has a live production job; don't rename a directory a running SLURM job has as its WorkDir)
 - `full-model` — still `/project2/haddadian/junseo/beagle3-jobs/full_equil/` (move deferred — production being launched here; see first-production-block transition note above)
 
-### Beagle3 job queue snapshot — July 22, 2026, end of day (verify at next session start)
+### Beagle3 job queue snapshot — July 22→23, 2026, session close (start here next session)
 
-All ten jobs below were the full `squeue -u junseo` output at session close. Re-check status first thing
-next session — several were still queued (not yet started) when this was written.
+**Morning startup checklist:**
+1. `ssh beagle3 "squeue -u junseo"` — compare against the tables below; several jobs were mid-run/pending
+   at session close and will have moved on by morning.
+2. Check the 4 GaMD-benchmark jobs (1/2/3/4-GPU) for their final steady-state ns/day once all four have
+   real numbers — the 1-GPU vs 2-GPU near-identical speed (below) is unexplained and worth a real look.
+3. Check `gamd-openmm-bench` completion and final speed — first real GaMD-via-OpenMM number ever produced.
+4. Resubmit the Martini EM with a real wall-time on `gromacs/2025.3` (not 2022.4) — see "Martini 3 CG
+   Dome System" section below, the segfault is fixed but EM never got a long-enough run to finish.
+5. The `full-model` resident-vs-offload question (below) is still open — decide whether to investigate
+   or explicitly accept resident mode going forward.
 
-**Running:**
-| Job ID | Name | Elapsed | What it is |
-|---|---|---|---|
-| 52524206 | full-bact-prod | ~5h | Normal `full-bact` production loop (1 GPU offload) |
-| 52465073 | full-model-prod | ~1d 6h | Normal `full-model` production loop (1 GPU offload) |
+This replaces the earlier same-day snapshot — several of those jobs completed or failed differently
+overnight, with genuinely new root causes (not the same bugs re-appearing). Re-check `squeue -u junseo`
+first thing next session; below is the state as of this session's close.
 
-**Pending (queued, not yet started — check `squeue`/`sacct` next session):**
-| Job ID | Name | Purpose | Next action if it fails again |
-|---|---|---|---|
-| 52525060 | control-prod | Normal `control` production continuation | Resubmit from `control/` dir if it drops out of queue |
-| 52527113 | gamd-dome-model-equil | `dome-model` GaMD equilibration, 4 GPU offload (the fix for the 2 ns/day speed problem — expected ~6.4 ns/day per Rajiv's validated config) | If it fails, check `.err` for margin/config issues before assuming the 4-GPU fix itself is wrong |
-| 52527114 | gamd-dome-bact-equil | Same as above for `dome-bact` | Same |
-| 52534069 | gamd-bench-1gpu | NAMD GaMD speed benchmark (1 GPU), part of the original speed-sweep — was one of 5 jobs that failed earlier this session from missing `step5_input.str`/`toppar`/restart files in `gamd_benchmark/`; fixed by symlinking them in from the parent `namd/` dir | If it fails again, check `gamd_benchmark/bench-1gpu_*.err` — the symlink fix should hold, so a new failure means a genuinely new issue |
-| 52534070 | gamd-bench-2gpu | Same benchmark, 2 GPU | Same |
-| 52534071 | gamd-bench-3gpu | Same benchmark, 3 GPU | Same |
-| 52524799 | gamd-bench-4gpu | Same benchmark, 4 GPU — this one was queued *before* today's session and never actually ran yet, so it never hit the missing-file crash, but shares the same (now-fixed) `gamd_benchmark/` directory, so it should be fine when it starts | Same |
-| 52534074 | openmm-bench-2fs | OpenMM plain-MD (non-GaMD) 2fs speed benchmark — originally failed on a missing `step6.6_equilibration.pdb`; fixed by generating it via MDAnalysis from the NAMD binary restart coords, adding the full CHARMM `toppar/` parameter set to the script (was missing entirely — `createSystem()` needs `params`), and setting the real box vectors (296.94×296.94×194.87 Å) instead of relying on a broken/unitary CRYST1 | If it fails, check `bench_openmm_2fs_*.err` on Beagle3 (`/project2/haddadian/junseo/beagle3-jobs/domeonly_equil_openmm/openmm/`) |
-| 52534068 | gamd-openmm-bench | **Real** OpenMM GaMD benchmark using the actual Miao Lab `gamd-openmm` package (installed this session via `pip install --user` after `git clone` on Beagle3's login node — the original script's `mm.GaussianAccelerationGroupForce()` call was calling a class that doesn't exist anywhere in OpenMM; confirmed via `hasattr(openmm, ...)` before concluding this). Driven by `gamd_benchmark.xml` (staged production: 1000 conventional-MD-prep + 1000 conventional-MD + 1000 GaMD-eq-prep + 1000 GaMD-eq + 50000 GaMD-production steps, `lower-dual` boost, sigma0 6.0/6.0 kcal/mol matching Rajiv's NAMD config) | If it fails, check `gamd_openmm_bench_*.err` in the same `openmm/` dir — first thing to verify is whether the XML's box-vectors/parameter file paths still resolve correctly |
-| 52534609 | martini-dome-em | Martini CG system energy minimization (first ever run of the new pipeline — see "Martini 3 CG Dome System" section below) | If it fails, do **not** run `gmx mdrun` directly on the login node to debug (segfaults immediately, no GPU) — always via `sbatch`. Check `em_*.err`/`em_*.out` in `/scratch/beagle3/junseo/martini-dome-cg/` |
+**Running, expected to still be going:**
+| Job ID | Name | What it is |
+|---|---|---|
+| 52525060 | control-prod | Normal `control` production continuation |
+| 52524206 | full-bact-prod | Normal `full-bact` production loop (1 GPU offload) |
+| 52546353 | gamd-bench-1gpu | NAMD GaMD speed benchmark, confirmed healthy — real GaMD statistics being computed, steady-state **0.888 ns/day** at step 10,000 |
+| 52546354 | gamd-bench-2gpu | Same benchmark, 2 GPU — confirmed healthy, **0.876 ns/day** at step 5,000. **Open question**: this is essentially identical to the 1-GPU number, showing no scaling benefit at all — contradicts the earlier-documented "2-GPU offload GaMD: ~2.0 ns/day, 1.28× over 1-GPU" finding (job 52473718). Worth comparing configs once 3-GPU/4-GPU results are in — don't assume either number is wrong yet |
+| 52546365 | gamd-openmm-bench | First-ever real GaMD run via the Miao Lab `gamd-openmm` package — confirmed healthy, actively writing trajectory (`output.dcd` growing, ~1 GB and climbing as of session close). Doesn't print progress to stdout (writes to internal files instead — don't mistake an empty `.out` for a stall) |
 
-**Two incidents already fixed this session, for context**: the `gamd_benchmark/1gpu/2gpu/3gpu` jobs were
-missing `step5_input.str`, `step5_input.psf/.pdb`, `toppar/`, and `step7_20.restart.*` in their working
-directory (all present in the parent `namd/` dir, just never copied/symlinked in) — fixed via symlinks.
-The `openmm-bench-2fs` and `gamd-openmm-bench` jobs both needed a real equilibrated PDB that never
-existed in that directory (only NAMD binary `.coor`/`.psf` did) — generated via MDAnalysis
-(`u = mda.Universe(psf, coor, format='NAMDBIN'); u.atoms.write(pdb)`), which also required box
-dimensions read from the `.xsc` restart file since MDAnalysis writes a unitary placeholder `CRYST1`
-otherwise.
+**Pending (queued, not started — resource wait, not a bug):**
+| Job ID | Name | Notes |
+|---|---|---|
+| 52546355 | gamd-bench-3gpu | Same benchmark, 3 GPU |
+| 52524799 | gamd-bench-4gpu | Same benchmark, 4 GPU — shares the same (now-fixed) config file, no separate action needed when it starts |
+| 52527113 | gamd-dome-model-equil | `dome-model` real GaMD equilibration, 4 GPU offload — the actual science-relevant run (not a benchmark). Still waiting on resources as of session close |
+| 52527114 | gamd-dome-bact-equil | Same for `dome-bact` |
+| 52546374 | full-model-prod | Routine continuation — the *previous* full-model-prod job (52465073) completed normally overnight (12.05→14.05 ns, ran its full allocation, nothing auto-chains). **Open question, unresolved**: this system is currently configured `CUDASOAintegrate on` (resident mode, 2 GPU) and has been running fine for 10+ ns — this contradicts the July 17–20 finding that resident mode crashes FtsH systems ("atoms moving too fast"). Don't know if this was an intentional revert or an accident. Worth confirming with fresh eyes before assuming it's safe long-term |
+
+**Completed overnight:**
+| Job ID | Name | Result |
+|---|---|---|
+| 52546364 | openmm-bench-2fs | ✅ Completed cleanly. **6.79 ns/day** (plain 2fs, non-GaMD OpenMM, no HMR) — real, trustworthy number now (fixed a `../toppar/` relative-path bug this session; see gotcha below) |
+| 52465073 | full-model-prod (old) | ✅ Completed normally, 12.05→14.05 ns |
+
+**Three new bugs found and fixed this session (all different from the missing-file issues fixed earlier
+in the day) — worth reading before touching any of these again:**
+1. **NAMD GaMD benchmarks** (`gamd-bench-1/2/3gpu`) failed with `ERROR: 'accelMDGRestartFile' is a
+   required configuration option when 'accelMDGRestart' is set`. The `.inp` had `accelMDGRestart on`
+   (copied from a real production config that legitimately restarts from a prior GaMD segment) but no
+   restart file was ever staged for this from-scratch benchmark. Fix: `accelMDGRestart off` — correct
+   for a fresh speed test, not a real restart.
+2. **`openmm-bench-2fs`** failed on `FileNotFoundError: 'toppar/top_all36_prot.rtf'` — the rewritten
+   script assumed `toppar/` was a subdirectory of the `openmm/` working directory; it's actually a
+   *sibling* directory one level up (`../toppar/`). Fixed all 50 references.
+3. **`gamd-openmm-bench`** "completed" in 2 seconds with zero output — the sbatch tried
+   `source .../envs/openmm/bin/activate`, which doesn't exist for this conda env, so `python` was never
+   found and nothing ran, but the script had no error-checking (`set -e`) to catch the failure and
+   silently reported false success. Fixed by switching to `module load openmm/8.1.0` (verified this
+   puts a working `python3` with both `openmm` and `gamd` importable on PATH before trusting it).
+
+**Lesson reinforced twice tonight**: a job showing `COMPLETED`/exit 0 is not proof it did anything —
+check for real output (a growing trajectory file, a nonzero log, actual numbers), not just the exit code.
 
 ### Martini 3 CG Dome System — Optional Comparison (built July 22, 2026 — EM queued)
 
@@ -595,13 +621,34 @@ entirely** and does both the AA→CG protein conversion and the membrane-buildin
 - `martini_chains/chain_*_0.itp` — 24 individual protein chain topologies
 - `martini_ff/*.itp` — 6 official Martini 3 parameter files (core, ffbonded, PE, PG, solvents, ions)
 - `em.mdp` / `md.mdp` — energy minimization / 10 fs production configs
-- `em.tpr` — validated, ready to minimize (job 52534609, queued as of session close)
 
-**Not yet done / next steps**: confirm EM converges (check `em.log` for "Steepest Descents converged"),
-then `gmx grompp -f md.mdp -c em.gro -p dome_martini_system.top -o dome.tpr` and submit production via
-`run_martini_gromacs.sbatch`. VMD visualization needs `em.gro` (post-minimization) rather than the raw
-`insane` output, since `.gro` has no bond connectivity and the pre-minimization structure has close
-contacts that read as visual clashes.
+**Confirmed standard practice, not an extra precaution**: checked the official Martini Force Field
+Initiative tutorial (cgmartini.nl) rather than assuming — energy minimization immediately after building
+a solvated/ionized system (exactly what `insane` produces) is the documented standard workflow
+(minimization → NVT/NPT equilibration → production), specifically *because* placing lipids/water/ions
+programmatically creates steric clashes that must be relaxed first. This is not specific to our pipeline.
+
+**EM segfault root-caused and fixed — was a GROMACS build bug, not a topology problem.** First `sbatch`
+attempt (job 52534609) segfaulted inside GROMACS's threaded virtual-site construction
+(`gmx::constr_vsiten` → `construct_vsites_thread`, address `0x180`). Our 24 protein chains all have
+standard Martini ring-stabilizing `[virtual_sitesn]` sections — normal and expected — so this looked
+concerning. Ruled out an OpenMP threading race by rerunning single-threaded/CPU-only (job 52546753) —
+**still segfaulted, in the same place, in 7 seconds** — meaning it wasn't threading-related. The actual
+cause: the loaded module was `gromacs/2022.4-plumed_2.8.1` (a PLUMED-patched build; PLUMED patches
+sometimes touch vsite/force code paths). Switched to `gromacs/2025.3` (also PLUMED-patched, but newer —
+`plumed-2.10.0`), regenerated `em.tpr` fresh with matching `grompp`, and reran: **completed 3,969 of 5,000
+minimization steps cleanly** (smooth potential-energy decrease from −4.24×10⁶ to −4.54×10⁶ kJ/mol, sane
+pressure/constraint-RMSD throughout) before hitting its 15-minute test wall-time limit — confirms the
+segfault is gone. **Always use `gromacs/2025.3` for this system, not the default `2022.4`.**
+
+**Not yet done / next steps**:
+1. Resubmit EM on `gromacs/2025.3` with a real wall-time budget (15 min was only a diagnostic test —
+   give it ≥1h to actually finish/converge). Check `em_v2025.log` for "Steepest Descents converged".
+2. `module load gromacs/2025.3` (not the default 2022.4) → `gmx_mpi grompp -f md.mdp -c em_v2025.gro -p dome_martini_system.top -o dome.tpr`
+3. Update `run_martini_gromacs.sbatch`'s module line from `gromacs/2022.4` to `gromacs/2025.3` before submitting production.
+4. VMD visualization needs the post-minimization `.gro` (once it exists) rather than the raw `insane`
+   output — `.gro` has no bond connectivity and the pre-minimization structure has close contacts that
+   read as visual clashes.
 
 ### NAMD vs OpenMM — decided (NAMD wins)
 

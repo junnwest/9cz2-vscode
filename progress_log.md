@@ -130,6 +130,77 @@ real working alternative:
 
 ---
 
+## July 22–23, 2026 (continued) — overnight: 3 new job bugs found/fixed, Martini EM segfault root-caused, all-clear before bed
+
+**Checked whether energy-minimization-after-coarse-graining is real standard practice, not assumed.**
+User asked directly, so did actual research rather than answering from memory: fetched the official
+Martini Force Field Initiative tutorial (cgmartini.nl). Confirmed — the documented standard workflow is
+minimization → NVT/NPT equilibration → production, specifically because placing lipids/water/ions
+programmatically (exactly what `insane` does) creates steric clashes that must be relaxed first. Not an
+extra precaution specific to our pipeline; this is the field's actual standard.
+
+**Checked on the 5 "fixed" jobs from earlier today — 3 of them had failed again, for entirely different
+reasons than before.** User noticed the queue had dropped to 3 pending + 2 running and asked what
+happened; investigated via `sacct`/`.err` rather than assuming the earlier fixes hadn't held:
+- `full-model-prod` (52465073) had actually **completed normally** overnight (12.05→14.05 ns, used its
+  full wall-time allocation, nothing auto-chains) — not a failure, just needed a routine resubmit
+  (52546374). While checking this, noticed something worth flagging: the running config currently has
+  `CUDASOAintegrate on` (**resident mode**), which directly contradicts the July 17–20 finding that
+  resident mode crashes FtsH systems ("atoms moving too fast"). It's been running fine for 10+ ns in
+  resident mode on 2 GPU (~8 ns/day, matching resident-tier speed) — timestamps show the switch happened
+  between `step7_3` (Jul 21, offload-era slow rate) and `step7_4` (Jul 21, suddenly fast). Don't know if
+  this was an intentional revert after building confidence, or accidental. **Left as an open question**,
+  not resolved — flagged prominently in CLAUDE.md for a fresh look.
+- **`gamd-bench-1/2/3gpu`** (NAMD) failed with a *different* error than this morning's missing-files bug:
+  `ERROR: 'accelMDGRestartFile' is a required configuration option when 'accelMDGRestart' is set`. The
+  `.inp` had `accelMDGRestart on` (copied from a real production config that legitimately restarts from
+  a prior GaMD segment) but this from-scratch benchmark never had a restart file to point it at. Fixed
+  by setting `accelMDGRestart off` — correct for a first-time speed test. Resubmitted (52546353/54/55);
+  1-GPU and 2-GPU are now running and healthy, real GaMD statistics being computed, both landing at
+  ~0.88 ns/day — **suspiciously identical between 1 and 2 GPU**, contradicting the earlier-documented
+  1.28× 2-GPU speedup (job 52473718). Not yet explained; worth comparing configs once 3/4-GPU data is in.
+- **`openmm-bench-2fs`** failed on `FileNotFoundError: toppar/top_all36_prot.rtf` — my earlier rewrite of
+  this script assumed `toppar/` was a subdirectory of the working `openmm/` directory; it's actually a
+  sibling directory one level up. Fixed all 50 path references to `../toppar/`. Resubmitted (52546364),
+  **completed cleanly**: 6.79 ns/day, a real trustworthy number now.
+- **`gamd-openmm-bench`** had "completed" in 2 seconds with zero output — false success. The sbatch tried
+  `source .../envs/openmm/bin/activate`, which doesn't exist for that conda environment, so `python` was
+  never found and the whole script silently no-op'd (no `set -e` to catch it). Fixed by switching to
+  `module load openmm/8.1.0` (verified directly that this puts a working `python3` with both `openmm`
+  and `gamd` importable on PATH, before trusting a resubmit). Resubmitted (52546365) — running and
+  healthy, actively writing a real trajectory (`output.dcd`, growing past 1 GB) — first real GaMD-via-
+  OpenMM run of the summer.
+- **Recurring lesson, worth internalizing**: none of tonight's 3 new failures were repeats of this
+  morning's bugs (missing files) — they were new problems that only surface once a job gets *past* the
+  missing-file stage. A job showing `COMPLETED`/exit 0 is not proof it did anything real (the
+  `gamd-openmm-bench` false-success case) — always check for actual output (growing trajectory, nonzero
+  log, real numbers), not just the exit code.
+
+**Martini EM segfault root-caused: a GROMACS build bug, not a topology problem.** The first real
+`sbatch` attempt (52534609, correctly run on a GPU compute node this time, not the login node) segfaulted
+inside GROMACS's threaded virtual-site construction (`gmx::constr_vsiten`, address `0x180`). This was
+concerning since it's inside our own protein topology's `[virtual_sitesn]` sections (Martini's standard
+ring-stabilizing construct, present in all 24 chains) — but `grompp` had validated with zero errors, so a
+real topology bug seemed unlikely. Ruled out an OpenMP threading race first (the most likely category of
+bug for a crash inside threaded vsite construction): reran single-threaded, CPU-only — **still segfaulted,
+same exact spot, in 7 seconds**. That ruled out threading. The actual cause: the loaded module was
+`gromacs/2022.4-plumed_2.8.1`, a PLUMED-patched build (PLUMED patches are known to sometimes touch
+force/vsite code paths). Switched to `gromacs/2025.3` (also PLUMED-patched, but far newer — plumed
+2.10.0), regenerated `em.tpr` fresh with matching `grompp`, reran: **completed 3,969 of 5,000 steps
+cleanly**, potential energy smoothly decreasing (−4.24×10⁶ → −4.54×10⁶ kJ/mol), no crash — only stopped
+because the diagnostic run's 15-minute wall-time limit hit, not because of any error. Confirms the fix.
+**Always use `gromacs/2025.3` for this system going forward, never the cluster's default `2022.4`.**
+EM itself was never given a real time budget to actually finish — that's tomorrow's first step.
+
+**Session close, all-clear**: two production systems running normally (`control`, `full-bact`), three
+benchmark jobs confirmed healthy and producing real data overnight (`gamd-bench-1gpu`, `gamd-bench-2gpu`,
+`gamd-openmm-bench`), two more resubmitted and pending on resources (`gamd-bench-3/4gpu`), the two real
+GaMD equilibration jobs still queued (`gamd-dome-model-equil`, `gamd-dome-bact-equil`), `full-model-prod`
+resubmitted, and the Martini EM ready to resubmit with a proper wall-time on the correct GROMACS version.
+Full morning checklist and per-job detail written into CLAUDE.md's "Beagle3 job queue snapshot" section.
+
+---
+
 ## July 17–20, 2026 — Days 36–39
 
 **FtsH resident-mode crash fully diagnosed → FtsH systems run OFFLOAD**
