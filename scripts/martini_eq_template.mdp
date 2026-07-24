@@ -1,19 +1,20 @@
-; Martini 3 dome CG production
+; Martini 3 dome CG equilibration
 ; Verified July 23, 2026 against the official Martini 3 tutorial's validated
 ; insane-workflow example (cgmartini.nl, KALP transmembrane peptide,
-; KALP_new/KALP-worked/insane/dynamic.mdp).
+; KALP_new/KALP-worked/insane/equilibration.mdp) — protein-in-membrane, built
+; via insane, same as us. Single combined NVT+NPT stage (posres throughout),
+; matching the validated reference rather than the two ad-hoc stages this
+; project used first (which had unverified isotropic/single-tc-grp/Berendsen
+; settings).
+define                   = -DPOSRES
 integrator               = md
-dt                       = 0.02       ; 20 fs, standard Martini 3 production timestep
-nsteps                   = 100000     ; 2 ns per block
-
-comm-mode                = Linear
-nstcomm                  = 100
+dt                       = 0.01
+nsteps                   = 100000   ; 1 ns
 
 nstxout                  = 0
 nstvout                  = 0
 nstfout                  = 0
 nstlog                   = 1000
-nstenergy                = 1000
 nstxout-compressed       = 1000
 compressed-x-precision   = 100
 
@@ -21,8 +22,7 @@ cutoff-scheme            = Verlet
 nstlist                  = 20
 ns_type                  = grid
 pbc                      = xyz
-verlet-buffer-tolerance  = -1
-rlist                    = 1.35
+verlet-buffer-tolerance  = 0.005
 
 coulombtype              = reaction-field
 rcoulomb                 = 1.1
@@ -36,15 +36,15 @@ tcoupl                   = v-rescale
 tc-grps                  = Protein_Membrane W_ION
 tau-t                    = 1.0 1.0
 ref-t                    = 303.15 303.15
+gen-vel                  = yes
+gen-temp                 = 303.15
 
-continuation             = yes        ; continuing from eq.mdp
-gen-vel                  = no         ; continuing from eq.mdp
-
-Pcoupl                   = parrinello-rahman
+Pcoupl                   = c-rescale
 Pcoupltype               = semiisotropic
-tau-p                    = 12.0
-compressibility          = 3e-4 3e-4
+tau-p                    = 4.0
+compressibility          = 4.5e-5 4.5e-5
 ref-p                    = 1.0 1.0
+refcoord-scaling         = com
 
-lincs-order              = 4
-lincs_warnangle          = 30
+comm-mode                = Linear
+nstcomm                  = 100

@@ -1,0 +1,44 @@
+; Martini 3 CG energy minimization for dome system
+; Required before any NPT run — insane-built systems always have close contacts
+;
+; Values verified July 23, 2026 against the official Martini 3 tutorial's
+; validated insane-workflow example (cgmartini.nl, KALP transmembrane peptide,
+; KALP_new/KALP-worked/insane/minimization.mdp) — protein-in-membrane, built
+; via insane, same tool we used. reaction-field/1.1nm/verlet-buffer-tolerance
+; replace this file's earlier PME/1.2nm/fixed-rlist settings, which were
+; written from general knowledge, not verified against a reference, and were
+; inconsistent with how the Martini 3 force field's charged beads were
+; parameterized.
+
+title                   = Martini 3 dome CG minimization
+integrator              = steep
+emtol                   = 200.0     ; stop when max force < 200 kJ/mol/nm
+emstep                  = 0.01      ; initial step size (nm)
+nsteps                  = 5000
+
+; output
+nstxout                 = 0
+nstvout                 = 0
+nstlog                  = 100
+nstenergy               = 100
+
+; Neighbor search
+cutoff-scheme           = Verlet
+nstlist                 = 20
+ns_type                 = grid
+pbc                     = xyz
+verlet-buffer-tolerance = 0.005
+
+; VdW
+vdw_type                = cutoff
+vdw-modifier            = Potential-shift-verlet
+rvdw                    = 1.1
+
+; Electrostatics (reaction-field — standard for non-polarizable Martini water)
+coulombtype             = reaction-field
+rcoulomb                = 1.1
+epsilon_r               = 15
+epsilon_rf              = 0
+
+; No constraints during minimization
+constraints             = none

@@ -388,34 +388,56 @@ Midway3 and Beagle3 login nodes — no need to bounce through Midway3 for cross-
 
 ### The 5 systems
 
-| Name | Protein content | Lipid composition | Status (July 22, end of day) |
+| Name | Protein content | Lipid composition | Status (July 24, session close) |
 |---|---|---|---|
-| `control` | none (membrane-only baseline) | Composition #1 | Production, 51.53 ns; running (4 GPU resident, looping, no cap). Next block pending in queue (job 52525060) |
-| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | **20.05 ns — hit the cap.** Conventional MD done; GaMD equilibration job **52527113** (4 GPU offload) queued, not yet started |
-| `dome-bact` | dome only | Composition #2 | **20.0 ns — hit the cap.** Conventional MD done; GaMD equilibration job **52527114** (4 GPU offload) queued, not yet started |
-| `full-model` | full dome + FtsH | Composition #1 | Production, 12.05 ns; running (1 GPU offload, looping) |
-| `full-bact` | full dome + FtsH | Composition #2 | Production, 4.05 ns; running (1 GPU offload, looping) |
-| `martini-dome` (optional) | dome only CG (24-chain Martini 3 protein) | DPPE 70% / POPG 15% / DOPG 15% (cardiolipin fraction redistributed — see below) | **Built and validated.** Energy minimization job **52534609** queued on Beagle3, not yet started |
+| `control` | none (membrane-only baseline) | Composition #1 | Conventional NAMD production (job 52611795, 48h — resubmitted to fix a missing `--constraint=a100`, see job-queue snapshot below) **and** GaMD equilibration (job 52610940, from `step7_21` — see correction below) in parallel |
+| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Conventional NAMD production **continuing** (job 52595314, 48h, `TARGET_NS` cap removed July 24) **and** GaMD equilibration (job 52527113) — both running in parallel, not sequential |
+| `dome-bact` | dome only | Composition #2 | Same as `dome-model`: conventional NAMD production continuing (job 52595315, 48h) **and** GaMD equilibration (job 52527114) in parallel |
+| `full-model` | full dome + FtsH | Composition #1 | Conventional NAMD production (job 52609176, 48h; 1 GPU offload) **and** GaMD equilibration (job 52610941, from `step7_20`) in parallel |
+| `full-bact` | full dome + FtsH | Composition #2 | Production continuing (job 52595316, 48h; 10.05 ns cumulative as of session close). **GaMD not yet started** — waiting until it crosses 20 ns |
+| `martini-dome` (optional) | dome only CG (24-chain Martini 3 protein) | Real Model composition (DPPE 70/POPG 12.5/DOPG 12.5/TOCL 5 — no longer redistributed, see July 22–24 Martini section) | Equilibrated, production running (job 52594023) |
+
+**CORRECTION (July 24) — the earlier "20 ns cap, conventional MD done, GaMD runs after" framing was
+misleading and has been reversed.** `TARGET_NS=20` was never meant to permanently stop conventional NAMD
+production for `dome-model`/`dome-bact` — **conventional NAMD and GaMD run as two separate, parallel
+tracks for these two systems, not a sequential handoff.** The `TARGET_NS=20` line has been removed from
+both systems' `job-submit-beagle3-prod.sbatch`, and continuing production jobs were submitted alongside
+their already-queued GaMD equilibration jobs.
 
 **Production now LOOPS within a job (as of July 20).** `run_prod_gpu.sh` was rewritten to run sequential
 1 ns chunks until the wall-time allocation is nearly used (or a per-job 12-chunk cap), matching Rajiv's
 convention (iterate many ns, processed in 1 ns chunks) — no more per-ns manual resubmits. Per-system knobs
-are set via env in each sbatch: `DEVICES` (GPU list) and `TARGET_NS` (stop at a total, e.g. 20 for the
-dome systems). Still nothing auto-chains ACROSS jobs — resubmit for another allocation's worth. (dome-bact
-validated the loop: ran 0→12 ns in one job before the rewrite's cap.)
+are set via env in each sbatch: `DEVICES` (GPU list) and, historically, `TARGET_NS` — **now removed for
+dome-model/dome-bact per the correction above; not used for control/full-model/full-bact.** Still nothing
+auto-chains ACROSS jobs — resubmit for another allocation's worth.
 
-**`dome-model`/`dome-bact` capped at 20 ns** (`TARGET_NS=20`) — conventional MD stops there and **GaMD**
-(Gaussian Accelerated MD) runs after, to accelerate the dome opening while keeping everything all-atom.
-GaMD chosen over coarse-graining after research (July 17–20): a Martini AA-protein/CG-membrane hybrid
-couples the protein–lipid *interface* only at CG resolution (loses the lipid-specificity our question
-depends on) and is documented to over-stabilize protein conformational dynamics — the exact thing we study.
-See progress log.
+**Wall-time convention updated July 24: submit all production jobs at 48h (`2-00:00:00`)**, the actual
+QOS maximum (`beagle3-prio` MaxWall, confirmed via `sacctmgr show qos`) — up from the earlier 36h
+(`1-12:00:00`) convention. Applies going forward to new submissions; jobs already running at 36h were
+left as-is rather than restarted.
+
+**GaMD chosen over coarse-graining as the enhanced-sampling approach** after research (July 17–20): a
+Martini AA-protein/CG-membrane hybrid couples the protein–lipid *interface* only at CG resolution (loses
+the lipid-specificity our question depends on) and is documented to over-stabilize protein conformational
+dynamics — the exact thing we study. See progress log. (The separate, fully-CG `martini-dome` comparison
+system above is a different, complementary effort — a speed/sanity check, not this hybrid approach.)
 
 **GaMD technical notes (verified July 22, 2026):**
 - **Resident mode is incompatible with GaMD** (tested, job 52473685: NAMD FATAL-errors at startup with `GPUresident is incompatible with... accelMD` and related options). The fast ~8 ns/day resident production is off the table — GaMD structurally requires offload mode.
 - **2-GPU offload GaMD benchmark** (job 52473718): 0.0844 s/step = **~2.0 ns/day** (1.28× speedup over 1 GPU). Scaling is moderate (GaMD boost overhead doesn't parallelize as cleanly as plain dynamics), but real.
 - **GaMD equilibration timeline for dome systems** (52 ns target): ~26 days wall-clock, running both `dome-model` and `dome-bact` GaMD in parallel on separate 2-GPU allocations.
 - **Recommendation**: Launch both dome GaMD runs on 2 GPU / 16 PE offload (Rajiv's templates used 1 GPU; bumping to 2 saves ~one week per system).
+
+**Possible fix for the resident-mode-incompatible-with-GaMD limitation — Dr. Haochuan Chen's NAMD GPU-resident GaMD patch (lead surfaced July 23, 2026):**
+- Learned of this via an email thread forwarded by Dr. Haddadian (originally sent to him July 15, thread dated July 2–9) between Prof. Stephen Meredith / Dr. Shirin Ardekani (UChicago, unrelated T-cell-receptor GaMD project) and Arvind Ramanathan / Moeen Meigooni (Argonne National Lab), about running GaMD on ALCF's Polaris/Aurora.
+- Per that thread, **Dr. Haochuan Chen** (Beckman Institute, UIUC — NAMD/TCBG developer) has implemented **GPU-resident GaMD support for NAMD**, referenced as merge requests **`!489`** and **`!504`** on `gitlab.com/tcbgUIUC/namd`, described in the thread as "completed and pending review" (not yet in a mainline NAMD release as of early July). Meigooni's email: "since Haochuan says fully GPU-resident GaMD is available, it's likely that NAMD's new GaMD could be on par with OpenMM's GaMD in terms of performance." Dr. Meredith's email adds MR 504 targets **NVIDIA or AMD GPUs** (tested on Polaris) — plausibly buildable on Beagle3's A100s too, since that's the same GPU family (unlike Aurora's Intel GPUs, which the patch does NOT support).
+- **Why this matters here**: this is the exact same wall documented above (resident mode FATAL-errors with `accelMD`, job 52473685) — if Chen's patch works and can be applied to a Beagle3 NAMD build, it could recover the ~4× resident-vs-offload speedup seen in this project's non-GaMD benchmarks (offload GaMD is currently ~0.87–2.0 ns/day; resident-mode plain MD reaches ~8 ns/day) for the dome-model/dome-bact GaMD equilibration runs.
+- **Status (July 23)**: requested and received `gitlab.com/tcbgUIUC/namd` access, but could not locate MR 489/504 or any related branch/work from Dr. Chen in the repo.
+- **RESOLVED (July 24) — built and verified working.** Dr. Chen granted direct GitLab access to the actual branch: `haochuan/gpu_accelmd_2` (commit `ebed67284e6ab8f72dcb6b15bd32ed0117e10193`; reports as **NAMD 3.1alpha4pre**, a dev version, not a tagged release). Cloned to `/scratch/beagle3/junseo/namd-chen-gpuresident/` (private repo — this local checkout is the only copy Beagle3 staff can access, since they don't have GitLab approval themselves).
+  - **Build**: Charm++ 8.0.0 (`github.com/charmplusplus/charm` tag v8.0.0) via `./build charm++ multicore-linux-x86_64 --with-production` (cmake/4.3.0 loaded first — without it, `./build` silently falls back to the legacy `buildold` path). TCL 8.6.17 threaded + FFTW from `ks.uiuc.edu/Research/namd/libraries/` — **this branch specifically requires TCL 8.6.x, not the older 8.5.9** some other NAMD builds use (per its own release notes, needed for Colvars/TCL-forces support in GPU-resident mode). NAMD configured via `./config Linux-x86_64-g++ --charm-arch multicore-linux-x86_64 --with-single-node-cuda --cuda-prefix /software/cuda-11.5-el8-x86_64`, built with `make -j16` on a compute node (GPU node, though CUDA compilation itself doesn't strictly need a live GPU). Binary: `/scratch/beagle3/junseo/namd-chen-gpuresident/Linux-x86_64-g++/namd3`.
+  - **Test result (job 52586965)**: ran the existing GaMD benchmark (`accelMD`+`accelMDG` dual-boost, dome-model system) with `CUDASOAintegrate on` + 16 PE / 2 GPU — completed 5,000 steps cleanly, **no FATAL error** (the exact thing that crashes stock 3.0.1), sane energies. **8.57 ns/day**, vs. ~0.87–0.88 ns/day for the equivalent PE-fixed *offload*-mode benchmark on stock `namd/3.0.1-multicore-cuda` — **~10× speedup**. Would cut the ~26-day GaMD equilibration estimate to a few days.
+  - **Email sent to Beagle3 support (July 24)**: requested review/adoption as a supported module, pointing at the local checkout above (not the GitLab URL, since staff don't have access) plus the exact build commands and the benchmark result.
+- **Not yet done**: longer validation run (5,000 steps was a smoke test, not a steady-state confirmation) before actually redirecting the real `gamd-dome-model-equil`/`gamd-dome-bact-equil` jobs (52527113/52527114, still PENDING in offload-mode config) to this build.
 
 **Martini CG comparison system** (optional, July 22 decision): full dome-only system (protein AND membrane
 both coarse-grained to Martini 3 — not a mixed AA-protein/CG-membrane hybrid; that hybrid approach was
@@ -452,67 +474,80 @@ composition-#1-vs-#2 comparison isn't confounded by a different protein build.
 - `dome-model` — still `/project2/haddadian/junseo/beagle3-jobs/domeonly_equil/` (move deferred — has a live production job; don't rename a directory a running SLURM job has as its WorkDir)
 - `full-model` — still `/project2/haddadian/junseo/beagle3-jobs/full_equil/` (move deferred — production being launched here; see first-production-block transition note above)
 
-### Beagle3 job queue snapshot — July 22→23, 2026, session close (start here next session)
+**Reorg plan refined July 24, 2026** — now scaling to 5 systems × 3 methods (NAMD/GaMD/Martini), so the
+target structure is **system-first for NAMD+GaMD** (`{system}/{namd,gamd}/`, since they share large PSF/
+PDB/toppar inputs — method-first would mean duplicating or symlinking those) and **method-first only for
+Martini** (`martini/{system}/`, since it shares nothing with the AA systems). Same "don't move a directory
+a running job has as WorkDir" rule applies throughout. Status: `/scratch/beagle3/junseo/martini/dome-model`
+created as a **symlink** to the still-live `martini-dome-cg/` (has job `martini-prod-1` running out of it)
+— gives the clean path now with zero risk; swap for a real move once that job finishes. NAMD/GaMD
+`{namd,gamd}/` migration not started — `control-prod`/`full-model-prod`/`full-bact-prod` all live as of
+this session's close, wait for each to idle before touching its directory.
+
+### Beagle3 job queue snapshot — July 24, 2026, session close (start here next session)
 
 **Morning startup checklist:**
-1. `ssh beagle3 "squeue -u junseo"` — compare against the tables below; several jobs were mid-run/pending
-   at session close and will have moved on by morning.
-2. Check the 4 GaMD-benchmark jobs (1/2/3/4-GPU) for their final steady-state ns/day once all four have
-   real numbers — the 1-GPU vs 2-GPU near-identical speed (below) is unexplained and worth a real look.
-3. Check `gamd-openmm-bench` completion and final speed — first real GaMD-via-OpenMM number ever produced.
-4. Resubmit the Martini EM with a real wall-time on `gromacs/2025.3` (not 2022.4) — see "Martini 3 CG
-   Dome System" section below, the segfault is fixed but EM never got a long-enough run to finish.
-5. The `full-model` resident-vs-offload question (below) is still open — decide whether to investigate
-   or explicitly accept resident mode going forward.
+1. `ssh beagle3 "squeue -u junseo"` — compare against the table below.
+2. Check `martini-prod-1` (52594023) — was ~10+h into its 12h allocation at session close, should be
+   done or very close. Once done, launch the next Martini production block using the fastest *confirmed*
+   config, **32 threads / 2 GPU (2,116 ns/day)** — beats the 24t/1gpu config that block actually ran with.
+3. Check `full-bact-prod` (52595316) cumulative ns — once it crosses 20 ns, build and submit its GaMD
+   equilibration the same way `control`/`full-model` were done today (see Martini/GaMD sections below).
+4. Chen's NAMD build (resident-mode GaMD) was only smoke-tested (5,000 steps, ~2 min) — worth a longer
+   validation run before trusting it for anything real.
+5. `gamd-hmr4fs-2gpu` (from the original 6-job GaMD speed-test sweep) failed early and was never
+   diagnosed — minor, still open.
 
-This replaces the earlier same-day snapshot — several of those jobs completed or failed differently
-overnight, with genuinely new root causes (not the same bugs re-appearing). Re-check `squeue -u junseo`
-first thing next session; below is the state as of this session's close.
-
-**Running, expected to still be going:**
+**Running:**
 | Job ID | Name | What it is |
 |---|---|---|
-| 52525060 | control-prod | Normal `control` production continuation |
-| 52524206 | full-bact-prod | Normal `full-bact` production loop (1 GPU offload) |
-| 52546353 | gamd-bench-1gpu | NAMD GaMD speed benchmark, confirmed healthy — real GaMD statistics being computed, steady-state **0.888 ns/day** at step 10,000 |
-| 52546354 | gamd-bench-2gpu | Same benchmark, 2 GPU — confirmed healthy, **0.876 ns/day** at step 5,000. **Open question**: this is essentially identical to the 1-GPU number, showing no scaling benefit at all — contradicts the earlier-documented "2-GPU offload GaMD: ~2.0 ns/day, 1.28× over 1-GPU" finding (job 52473718). Worth comparing configs once 3-GPU/4-GPU results are in — don't assume either number is wrong yet |
-| 52546365 | gamd-openmm-bench | First-ever real GaMD run via the Miao Lab `gamd-openmm` package — confirmed healthy, actively writing trajectory (`output.dcd` growing, ~1 GB and climbing as of session close). Doesn't print progress to stdout (writes to internal files instead — don't mistake an empty `.out` for a stall) |
+| 52611795 | control-prod | Normal `control` production, resubmitted 48h — **fixed a missing `--constraint=a100`** in this system's script (only one missing it; every other job pins A100, this one could have silently landed on an A40) |
+| 52595314 | dome-model-prod | Normal `dome-model` production, resubmitted 48h, `TARGET_NS=20` cap **removed** (see correction below) |
+| 52595315 | dome-bact-prod | Same for `dome-bact` |
+| 52595316 | full-bact-prod | Normal `full-bact` production, resubmitted 48h |
+| (pending resubmit) | full-model-prod | 52609176 completed/replaced in the course of today's resubmission round — check `squeue` for the current job ID next session |
+| 52594023 | martini-prod-1 | Martini CG production, 24 threads/1 GPU (1,934 ns/day) — see checklist item 2 above |
+| 52527113 | gamd-dome-model-equil | GaMD equilibration, from `step7_20` restart |
+| 52527114 | gamd-dome-bact-equil | GaMD equilibration, from `step7_20` restart |
+| 52610940 | gamd-control-equil | **New today** — GaMD equilibration for `control`, branched from `step7_21` (its exact `step7_20` no longer exists after the July 15 rollback incident) |
+| 52610941 | gamd-full-model-equil | **New today** — GaMD equilibration for `full-model`, branched from `step7_20` |
 
-**Pending (queued, not started — resource wait, not a bug):**
-| Job ID | Name | Notes |
+**CORRECTION (July 24) — GaMD is not "3 systems," it's expanding to 4 (of 5).** Earlier framing implied
+GaMD was dome-model/dome-bact-only by design. Corrected: GaMD equilibration was built and submitted today
+for `control` and `full-model` too (both already past 20 ns of conventional production — the prerequisite
+before starting GaMD). Only `full-bact` (10.05 ns as of session close) doesn't have GaMD yet, purely
+because it hasn't reached 20 ns — not a scope decision. Both new configs fixed a latent bug found while
+adapting the `dome-model` template: it had `accelMDGRestart on` with no actual restart file staged (same
+missing-`accelMDGRestartFile` class of bug as the earlier GaMD benchmark fix) — set to `off` for these
+fresh starts.
+
+**Wall-time convention (July 24): all production submissions now use 48h (`2-00:00:00`)**, the confirmed
+`beagle3-prio` QOS maximum — up from the earlier 36h convention. **GaMD equilibration is a deliberate
+exception**, still using `beagle3-long` QOS at 96h (`4-00:00:00`) — pre-existing, reasoned choice
+(offload-mode GaMD is slow enough that even 96h may not finish one full 45 ns segment).
+
+**PE-fixed NAMD GaMD offload benchmarks — final numbers** (corrected a ps/ns unit error mid-session
+before reporting — 2 fs = 0.000002 ns, not 0.002):
+| GPUs | s/step | ns/day |
 |---|---|---|
-| 52546355 | gamd-bench-3gpu | Same benchmark, 3 GPU |
-| 52524799 | gamd-bench-4gpu | Same benchmark, 4 GPU — shares the same (now-fixed) config file, no separate action needed when it starts |
-| 52527113 | gamd-dome-model-equil | `dome-model` real GaMD equilibration, 4 GPU offload — the actual science-relevant run (not a benchmark). Still waiting on resources as of session close |
-| 52527114 | gamd-dome-bact-equil | Same for `dome-bact` |
-| 52546374 | full-model-prod | Routine continuation — the *previous* full-model-prod job (52465073) completed normally overnight (12.05→14.05 ns, ran its full allocation, nothing auto-chains). **Open question, unresolved**: this system is currently configured `CUDASOAintegrate on` (resident mode, 2 GPU) and has been running fine for 10+ ns — this contradicts the July 17–20 finding that resident mode crashes FtsH systems ("atoms moving too fast"). Don't know if this was an intentional revert or an accident. Worth confirming with fresh eyes before assuming it's safe long-term |
+| 1 | 0.110 | 1.57 |
+| 2 | 0.0625 | 2.77 |
+| 3 | 0.0475 | 3.64 |
+| 4 | 0.0382 | 4.53 |
 
-**Completed overnight:**
-| Job ID | Name | Result |
-|---|---|---|
-| 52546364 | openmm-bench-2fs | ✅ Completed cleanly. **6.79 ns/day** (plain 2fs, non-GaMD OpenMM, no HMR) — real, trustworthy number now (fixed a `../toppar/` relative-path bug this session; see gotcha below) |
-| 52465073 | full-model-prod (old) | ✅ Completed normally, 12.05→14.05 ns |
+Real, meaningful GPU scaling once the `+p4` PE-starvation bug was fixed (1.8×→5.2× over the original
+broken 0.878 ns/day flat-line) — resolves the "2-GPU shows no benefit" open question from earlier this
+summer, which was itself an artifact of that same bug. Still all *offload* mode (stock NAMD 3.0.1 can't
+do resident+GaMD) — Chen's resident-mode build hit 8.57 ns/day in its smoke test, still meaningfully
+ahead of even the best offload number here.
 
-**Three new bugs found and fixed this session (all different from the missing-file issues fixed earlier
-in the day) — worth reading before touching any of these again:**
-1. **NAMD GaMD benchmarks** (`gamd-bench-1/2/3gpu`) failed with `ERROR: 'accelMDGRestartFile' is a
-   required configuration option when 'accelMDGRestart' is set`. The `.inp` had `accelMDGRestart on`
-   (copied from a real production config that legitimately restarts from a prior GaMD segment) but no
-   restart file was ever staged for this from-scratch benchmark. Fix: `accelMDGRestart off` — correct
-   for a fresh speed test, not a real restart.
-2. **`openmm-bench-2fs`** failed on `FileNotFoundError: 'toppar/top_all36_prot.rtf'` — the rewritten
-   script assumed `toppar/` was a subdirectory of the `openmm/` working directory; it's actually a
-   *sibling* directory one level up (`../toppar/`). Fixed all 50 references.
-3. **`gamd-openmm-bench`** "completed" in 2 seconds with zero output — the sbatch tried
-   `source .../envs/openmm/bin/activate`, which doesn't exist for this conda env, so `python` was never
-   found and nothing ran, but the script had no error-checking (`set -e`) to catch the failure and
-   silently reported false success. Fixed by switching to `module load openmm/8.1.0` (verified this
-   puts a working `python3` with both `openmm` and `gamd` importable on PATH before trusting it).
+**Lesson reinforced again this session**: a job showing `COMPLETED`/exit 0 is not proof it did anything —
+check for real output, not just the exit code. Also: don't trust a user's (or your own) assumption about
+which jobs are "done"/"running" without checking `squeue`/`sacct` directly — this session caught several
+mismatches between assumed and actual job state this way (both directions: assumed-idle jobs that were
+actually running, and assumed-running jobs that had actually already completed).
 
-**Lesson reinforced twice tonight**: a job showing `COMPLETED`/exit 0 is not proof it did anything —
-check for real output (a growing trajectory file, a nonzero log, actual numbers), not just the exit code.
-
-### Martini 3 CG Dome System — Optional Comparison (built July 22, 2026 — EM queued)
+### Martini 3 CG Dome System — Optional Comparison (built July 22–24, 2026 — production running)
 
 **Purpose**: Speed sanity-check on CG dynamics (does dome opening happen at all in Martini?) — complementary
 to primary AA-only path, not replacement. ~50× speedup vs AA once past minimization, but lipid specificity
@@ -582,23 +617,33 @@ entirely** and does both the AA→CG protein conversion and the membrane-buildin
      layout and swapping only the headgroup bead (`GL0`→`NH3`) and charge (`-1`→`0`) to match the real
      `martini_v3.0.0_phospholipids_PE_v2.itp` DPPE parameters — fed to `insane` via a custom `-dat` file.
    - **Cardiolipin has no Martini 3 shape template in `insane` at all** (only Martini-2-era `M2.CDL0/1/2`,
-     explicitly commented "Warning not the same names is in .itp" in `lipids.dat`). Rather than hand-derive
-     an untested custom 19-bead template under time pressure, the cardiolipin fraction (5% total:
-     2.5% LOACL1 + 2.5% TLCL1 in Composition #1) was **redistributed into POPG/DOPG** (already 1:1),
-     giving this CG system DPPE 70% / POPG 15% / DOPG 15% instead of the real 5-lipid mix.
-     **This is a documented approximation specific to the comparison run — flag it in any writeup.**
-     If cardiolipin ever needs to be exact, the Martini 3 bead layout is fully known (from
-     `martini_v3.0.0_phospholipids_CL_v2.itp`'s `TMCL`/`TOCL` entries) and a proper `insane`
-     shape-template could be hand-built from it — just wasn't worth the risk this session.
+     explicitly commented "Warning not the same names is in .itp" in `lipids.dat` — different bead names/
+     count than the real M3 `TMCL`/`TOCL` topology, so unusable directly). **Initially (July 22) worked
+     around by redistributing the cardiolipin fraction into POPG/DOPG** — since superseded, see below.
+   - **RESOLVED (July 23) — built a real custom `M3.TOCL` shape-template entry** in `custom_lipids.dat`
+     (under insane's own `[ cardiolipins ]` block, whose 31-slot geometry was adapted directly to `TOCL`'s
+     real bead names/charges from `martini_v3.0.0_phospholipids_CL_v2.itp`: `GLC`/`PO41`/`PO42` linking+
+     phosphates, `GL11`/`GL21`/`GL12`/`GL22` glycerols, 4× 4-bead monounsaturated tails). Checked the AA
+     structure's real tail bond pattern directly (not assumed) to confirm identity: **`LOACL1` = tetraoleoyl
+     cardiolipin — exact match to `TOCL`**; **`TLCL1` = tetralinoleoyl (18:2 tails) — no diene Martini 3
+     template exists, `TOCL` is the closest available approximation**, used for both per project decision.
+     System now built with the **real** Model composition (DPPE 70 / POPG 12.5 / DOPG 12.5 / TOCL 5),
+     not the redistributed 70:15:15 stand-in. Verified against the real AA `dome-model` system's actual
+     as-built percentages (converting atom counts → molecules via each lipid's real atom count): AA =
+     71.43/12.25/12.25/4.08 (DPPE/POPG/DOPG/CL-combined) vs. CG = 70.07/12.48/12.48/4.98 — within ~1.4
+     points on every lipid, consistent with ordinary independent-system lipid-count rounding, not a
+     composition bug.
 
 7. **Build the full system**:
    ```bash
-   insane -f dome_protein_cg_combined.pdb -o system.gro -p system.top \
+   insane -f protein_final_corrected.gro -o system.gro -p system.top \
      -dat custom_lipids.dat -pbc rectangular -x <box-x-nm> -y <box-y-nm> -z <box-z-nm> \
-     -l DPPE:70 -l POPG:15 -l DOPG:15 -sol W -salt 0.15 -ff M3
+     -l DPPE:70 -l POPG:12.5 -l DOPG:12.5 -l TOCL:5 -sol W -salt 0.15 -ff M3 -fudge 0.9
    ```
    Box dimensions should match the original AA system's equilibrated box (read from the NAMD `.xsc`
-   restart file, in Å → convert to nm) for a fair comparison.
+   restart file, in Å → convert to nm) for a fair comparison. **`-fudge` (default 0.1) and the input
+   protein's pre-translation z-position are both critical and non-obvious — see the membrane-position
+   and lipid-exclusion fixes below before reusing this command blind.**
 
 8. **Fix the topology's protein section.** `insane` only knows the protein as one opaque input
    structure and writes a placeholder `Protein  1` line — it has no idea our system is actually 24
@@ -615,12 +660,28 @@ entirely** and does both the AA→CG protein conversion and the membrane-buildin
     login nodes (no GPU, and RCC actively discourages compute there) — always submit via `sbatch`,
     even for a quick energy-minimization test.
 
-**Files** (this session's build, local + Beagle3 `/scratch/beagle3/junseo/martini-dome-cg/`):
-- `dome_martini_system.gro` / `.top` — final system (135,760 CG beads: 18,264 protein / ~1,654 lipids /
-  95,580 water / 2,104 ions)
+**Files** (Beagle3 `/scratch/beagle3/junseo/martini-dome-cg/`, local mirror in
+`~/Downloads/charmm-gui-8458758786/` on the Mac):
+- `dome_martini_system.gro` / `.top` — current system (168,577 CG beads: 18,264 protein / real
+  Model lipid mix — DPPE 1999 + POPG 356 + DOPG 356 + TOCL 142 = 2,853 lipids / ~121k water / ~2.7k ions)
 - `martini_chains/chain_*_0.itp` — 24 individual protein chain topologies
-- `martini_ff/*.itp` — 6 official Martini 3 parameter files (core, ffbonded, PE, PG, solvents, ions)
-- `em.mdp` / `md.mdp` — energy minimization / 10 fs production configs
+- `martini_ff/*.itp` — 7 official Martini 3 parameter files (core, ffbonded, PE, PG, **CL**, solvents, ions)
+- `custom_lipids.dat` — hand-built `M3.DPPE` and `M3.TOCL` shape-template entries (see above)
+- `em.mdp` / `eq.mdp` / `md.mdp` — minimization / equilibration / production configs, **all verified
+  against the official Martini 3 tutorial's validated `insane`-workflow example** (cgmartini.nl, KALP
+  transmembrane peptide, `KALP_new/KALP-worked/insane/{minimization,equilibration,dynamic}.mdp`) rather
+  than written from general knowledge — the first drafts of these files (PME electrostatics, 1.2 nm
+  cutoffs, isotropic barostat, single `tc-grps`, Berendsen throughout) were **not** verified this way and
+  had to be corrected; reference values: reaction-field electrostatics (`epsilon_r=15`, `epsilon_rf=0`),
+  1.1 nm cutoffs, semi-isotropic `c-rescale` (eq) → `parrinello-rahman` (production) barostat, separate
+  `Protein_Membrane`/`W_ION` thermostat groups, 20 fs production timestep. Repo copies:
+  `scripts/martini_em_template.mdp`, `scripts/martini_eq_template.mdp`, `scripts/martini_md_template.mdp`.
+- `index.ndx` — `Protein_Membrane` (groups 1+13+14+15+16) / `W_ION` (17+18) groups for `tc-grps`;
+  must be rebuilt (same selection commands, group numbers are stable) any time the lipid/water counts
+  change, since it's atom-index-based, not name-based.
+- Backups of superseded builds: `broken_build_backup/` (original, membrane-position bug), `redistributed_build_backup/`
+  (cardiolipin redistributed into POPG/DOPG), `oversparse_build_backup/` (real TOCL but default `-fudge`,
+  badly under-packed), `fudge03_build_backup/` (`-fudge 0.3`, better but one large void remained).
 
 **Confirmed standard practice, not an extra precaution**: checked the official Martini Force Field
 Initiative tutorial (cgmartini.nl) rather than assuming — energy minimization immediately after building
@@ -628,27 +689,130 @@ a solvated/ionized system (exactly what `insane` produces) is the documented sta
 (minimization → NVT/NPT equilibration → production), specifically *because* placing lipids/water/ions
 programmatically creates steric clashes that must be relaxed first. This is not specific to our pipeline.
 
-**EM segfault root-caused and fixed — was a GROMACS build bug, not a topology problem.** First `sbatch`
-attempt (job 52534609) segfaulted inside GROMACS's threaded virtual-site construction
-(`gmx::constr_vsiten` → `construct_vsites_thread`, address `0x180`). Our 24 protein chains all have
-standard Martini ring-stabilizing `[virtual_sitesn]` sections — normal and expected — so this looked
-concerning. Ruled out an OpenMP threading race by rerunning single-threaded/CPU-only (job 52546753) —
-**still segfaulted, in the same place, in 7 seconds** — meaning it wasn't threading-related. The actual
-cause: the loaded module was `gromacs/2022.4-plumed_2.8.1` (a PLUMED-patched build; PLUMED patches
-sometimes touch vsite/force code paths). Switched to `gromacs/2025.3` (also PLUMED-patched, but newer —
-`plumed-2.10.0`), regenerated `em.tpr` fresh with matching `grompp`, and reran: **completed 3,969 of 5,000
-minimization steps cleanly** (smooth potential-energy decrease from −4.24×10⁶ to −4.54×10⁶ kJ/mol, sane
-pressure/constraint-RMSD throughout) before hitting its 15-minute test wall-time limit — confirms the
-segfault is gone. **Always use `gromacs/2025.3` for this system, not the default `2022.4`.**
+**EM segfault root-caused and fixed (July 22–23) — was a GROMACS build bug, not a topology problem.**
+First `sbatch` attempt (job 52534609) segfaulted inside GROMACS's threaded virtual-site construction.
+Ruled out an OpenMP threading race by rerunning single-threaded/CPU-only — still segfaulted in the same
+place. Actual cause: the loaded module was `gromacs/2022.4-plumed_2.8.1` (PLUMED-patched build touching
+vsite/force code paths). **Always use `gromacs/2025.3` for this system, not the default `2022.4`.**
 
-**Not yet done / next steps**:
-1. Resubmit EM on `gromacs/2025.3` with a real wall-time budget (15 min was only a diagnostic test —
-   give it ≥1h to actually finish/converge). Check `em_v2025.log` for "Steepest Descents converged".
-2. `module load gromacs/2025.3` (not the default 2022.4) → `gmx_mpi grompp -f md.mdp -c em_v2025.gro -p dome_martini_system.top -o dome.tpr`
-3. Update `run_martini_gromacs.sbatch`'s module line from `gromacs/2022.4` to `gromacs/2025.3` before submitting production.
-4. VMD visualization needs the post-minimization `.gro` (once it exists) rather than the raw `insane`
-   output — `.gro` has no bond connectivity and the pre-minimization structure has close contacts that
-   read as visual clashes.
+**Membrane-position bug found and fixed (July 23).** Visual inspection in VMD showed the membrane
+crossing through roughly the vertical *middle* of the protein, not near the bottom as it should
+biologically (dome sits above a thin membrane-spanning anchor). Quantified against the real AA
+`dome-model` system: membrane should sit **~60 Å below the protein's center** (verified: real AA system
+= 60.5 Å below center); the broken CG build had it at ~50.7% up the protein's z-extent — i.e., dead
+center. **Root cause**: the CG pipeline starts from `dome_m3_af3_ic_minimized_final_noftsh.pdb`, which
+was *never* assembled with a membrane (no CHARMM-GUI membrane build in its history) — so `insane` had
+no way to know where the true anchor point was and centered on the protein's bulk mass instead.
+**Fix**: empirically reverse-engineered `insane`'s actual placement behavior (not simple box-centering —
+took iterative test runs to characterize), computed the exact z-translation needed for the pre-`insane`
+protein input, and enlarged the box in z from 19.487 → 24.0 nm for proper asymmetric padding (thin below
+the membrane, generous above the tall dome). Final result: **59.5 Å below center**, matching the 60.5 Å
+real-system reference within noise.
+
+**Lipid under-packing bug found and fixed (July 23–24) — `insane`'s `-fudge` exclusion parameter.**
+After the position fix, visual inspection (`resname DPPE POPG DOPG TOCL` in VMD) still showed a large
+connected void under the dome. Quantified via a pure-numpy connected-component analysis on a binned
+headgroup-density grid (PBC-aware flood fill, since `scipy.ndimage` had its own `libstdc++` version
+conflict on this node): **one contiguous void of 147.4 nm² (~6.85 nm equivalent radius)** — about 10×
+larger than the next-biggest gap, and ~6× larger in area than a single ~1 nm-diameter helical stalk
+should cause. Root cause: `insane`'s protein-lipid exclusion (`-fudge`, default `0.1`) marks a grid cell
+"occupied" if its local protein-atom density is above 10% of the single most-crowded cell anywhere —
+strict enough that a somewhat flexible/wobbly stalk region (this system's M3/anchor region has
+documented residual conformational uncertainty — see the AF3/rotation-search work earlier this summer)
+produces a gradual density falloff that fails the threshold over a much wider area than the true atomic
+footprint. **Fix**: swept `-fudge` from 0.1→0.3→0.6→0.9; void area dropped from 147.4 → 88.9 → 7.1 nm²
+(final: several modest ~5–13 nm² regions, no dominant blob — consistent with ~12 separate reasonable
+per-stalk exclusions, matching the real ring of HflK anchors). **Final config: `-fudge 0.9`**, area-per-
+lipid ≈ 61.8 Ų (real AA reference range: 52–73 Ų depending on lipid type) — verified this is *not* just
+"exclusion disabled" (`-fudge 1.0` would fully disable it) but a genuine, checked improvement.
+**`-fudge 0.9` should be treated as system-specific**, not a universal default — it compensates for this
+particular dome's unusually sparse/asymmetric membrane-crossing footprint; a typical single-TM-helix
+system would not need this.
+
+**1,900+ ns/day production speed is real, not a bug** — verified two ways before trusting it: (1)
+internal consistency — GROMACS's own per-operation timing breakdown gives 0.894 ms/step, which
+algebraically reproduces the reported 1,933.853 ns/day exactly via `86400/step_time × 0.02 ns/step`;
+(2) external corroboration — an unrelated, published GROMACS 2024 benchmark (NHR@FAU, A100, 16 threads)
+of an all-atom system at almost exactly the same particle count (170,320 atoms) gets **129.09 ns/day**;
+our CG system's ~13× speedup over that is fully explained by the 20 fs vs. 2 fs timestep (10×) plus
+cheaper reaction-field-vs-PME/no-explicit-H physics (~1.3×) — no unexplained residual. Same source also
+independently confirms a general effect we saw ourselves: their similarly-sized "System 3" is flagged as
+"too small to saturate" additional compute resources, matching our own finding that 2 GPU (1,708 ns/day)
+was *slower* than 1 GPU (1,721 ns/day) at the same thread count — not a fluke, a known small-system effect.
+Source: [HPC-Café: GROMACS 2024 usage and performance (NHR@FAU)](https://hpc.fau.de/files/2024/07/2024-07-09_NHR@FAU_HPC-Cafe_Gromacs-Benchmarks.pdf).
+
+**Production speed benchmark results (July 24)** — full cross-product, 5,000-step tests, `-resetstep 1000`:
+
+| Threads | 1 GPU, CPU update | 2 GPU, CPU update | GPU-update (any config) |
+|---|---|---|---|
+| 4 | 940 ns/day | — | FAILED |
+| 8 | 1,360 ns/day | — | FAILED |
+| 16 | 1,721 ns/day | 1,708 ns/day | FAILED |
+| 24 | 1,934 ns/day | — | — |
+| 32 | 1,883 ns/day (slight regression past 24t) | **2,116 ns/day** ← final best | — |
+
+`-update gpu` (full GPU-resident integration, avoiding CPU↔GPU round-trips) **fails outright for this
+system** — not a config error, a genuine GROMACS limitation: "Update task can not run on the GPU... Virtual
+sites are not supported" — and Martini protein backbones inherently use virtual sites (same feature that
+caused the earlier EM segfault investigation). Not worth pursuing further for any Martini system built
+this way. Note the non-monotonic pattern: at 16 threads 2 GPU was *slower* than 1 GPU (small-system
+under-saturation, externally corroborated below), but at 32 threads 2 GPU pulls decisively ahead —
+GPU count and thread count interact, don't assume a conclusion from one thread count generalizes.
+**Final best confirmed config: 32 threads, 2 GPU (2,116 ns/day).** `martini-prod-1`'s first block
+actually ran with the 24t/1gpu config (1,934 ns/day), since it launched before the 32t/2gpu result came
+in — use 32t/2gpu for the *next* continuation block.
+
+**Equilibration (July 24)** — 1 ns (100,000 steps, `dt=0.01`), `-DPOSRES` on protein backbone, single
+combined NVT+NPT stage (matches the validated KALP reference's approach directly, rather than the two
+ad-hoc NVT-then-NPT stages used in an earlier, unverified attempt). Completed cleanly in 1m43s
+(856 ns/day). Frame output (10 ps/frame, `eq.xtc`) checked against Rajiv's own real AA equilibration
+convention (`step6.1-6.6_equilibration.inp`, `/project2/haddadian/rajiv/charmm-gui-closed/namd/`) — his
+`dcdfreq 5000` gives 5 ps/frame (steps 1fs) transitioning to 10 ps/frame (steps 2fs) — confirms our
+spacing is well within his established range, not excessive. Final state: temperature 302.9 K (target
+303.15 K, essentially converged); pressure −6.7 bar (target 1 bar, still relaxing — expected, since this
+equilibration is the first one to run on the corrected/re-packed membrane, which needs genuine physical
+relaxation time, unlike the KALP reference system which had no such disturbance to recover from).
+
+**Production (started July 24, job 52594023, `martini-prod-1`)** — continuing from `eq.gro`/`eq.cpt`,
+24 threads / 1 GPU / CPU update, 12h wall-time (`-maxh 11.83`, large `-nsteps` override so wall-time is
+the actual limiter), expected **~950 ns** in this first block. Launched with the fastest *confirmed*
+config rather than waiting for the two still-pending benchmarks — if a faster config is confirmed next
+session, use it for the *next* continuation block (chaining continuation across blocks doesn't require
+matching performance settings between blocks, only the physics in the `.mdp`/topology need to stay fixed).
+
+**Next steps**:
+1. Check `martini-prod-1` (52594023) status and the two pending benchmark jobs (32 threads, 1 & 2 GPU).
+2. Pick the fastest confirmed config for the next continuation block (`grompp -c <last>.gro -t <last>.cpt ...`).
+3. VMD visualization: load via `.tpr` for bond connectivity — but this VMD build's native `.tpr` reader
+   fails on GROMACS 2025.3's newer binary format (`ERROR) Could not read file ...tpr`). Use the official
+   `cg_bonds.tcl` helper instead (bundled in the Martini `LipidsII` tutorial archive, copied to
+   `~/Downloads/charmm-gui-8458758786/cg_bonds.tcl`): load the plain `.gro`, then in VMD's Tk Console,
+   `source cg_bonds.tcl` → `cg_bonds -top dome_martini_system.top -cutoff 6.2 -topoltype "martini"` —
+   reads bonds directly from the `.top`/`.itp` text, no GROMACS install or working `.tpr` reader needed.
+4. For New Cartoon rendering: VMD's STRIDE can't recognize Martini backbone beads (no atom literally
+   named `CA`), so secondary structure has to be transferred from the original AA per-chain PDBs
+   (`dome_m3_af3_ic_minimized_final_noftsh_pro{a..x}.pdb`, uploaded to Beagle3 at
+   `/scratch/beagle3/junseo/martini-dome-cg/aa_chains/` for use there too) via a helper script:
+   `~/Downloads/charmm-gui-8458758786/transfer_secondary_structure.tcl` — computes real STRIDE on each AA
+   chain, maps residue numbering by the per-chain offset (CG resid = AA resid − offset, offset = each
+   chain's real first AA resid − 1, computed automatically per chain, not hardcoded), and copies the
+   H/E/C labels onto the CG molecule's `structure` field. Requires the CG molecule loaded via `.tpr` (or
+   `cg_bonds.tcl`) so VMD's `fragment` index correctly separates the 24 chains (fragments 0–23 = chains
+   a–x, in concatenation order). Display-only — never touches any simulation file.
+5. Residue numbering gotcha: `martinize2` renumbers every chain starting from 1 (discards real AA
+   numbering). Fixed offset per chain = real AA start resid − 1 (e.g. HflK chains: AA 79–419 → CG 1–341,
+   offset 78; the M3 tail AA 356–419 → CG resid 278–341). Resid also resets independently for every one
+   of the 24 chains, so a bare `resid` selection matches all 24 unless combined with `fragment` or a
+   resname-based protein filter (`resname ALA ARG ASN ASP GLN GLU GLY HSD ILE LEU LYS MET PHE PRO SER
+   THR TRP TYR VAL`) to exclude water/lipid/ion atoms sharing the same resid range.
+6. Ion naming gotcha: `insane` writes both Na⁺ and Cl⁻ under **resname `ION`** (not `NA`/`CL` as residue
+   names) — the species is only distinguished by **atom name** (`name NA` / `name CL` within `resname ION`).
+   `resname NA CL` matches zero atoms.
+7. Lipid headgroup selection: phosphate only (marks the two leaflet planes, what this session's own
+   diagnostic scripts used) = `name PO4 PO41 PO42` (unique to lipids, safe alone). Full chemical
+   headgroup needs splitting by lipid class since bead names differ: `(resname DPPE and name NH3 PO4)
+   or (resname POPG DOPG and name GL0 PO4) or (resname TOCL and name GLC PO41 PO42)` — `GL1`/`GL2`
+   (`GL11`/`GL21`/`GL12`/`GL22` for cardiolipin) are the glycerol backbone linking to tails, not headgroup.
 
 ### NAMD vs OpenMM — decided (NAMD wins)
 
