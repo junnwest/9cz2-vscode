@@ -21,6 +21,21 @@
 *.tgz
 *.tar.gz
 
+# Local trajectory pulls for visual inspection (large — keep on Beagle3/Midway3)
+# Data is ignored, but README.md IS tracked: it holds the VMD load commands and
+# the non-obvious gotchas. Use trajectories/* (not trajectories/) so git still
+# descends into the directory and can see the negation below.
+trajectories/*
+!trajectories/README.md
+dome-bact_traj/
+full-bact_traj/
+
+# CHARMM-GUI / AlphaFold bulk downloads (GB-scale structural data, not source)
+charmm-gui-*/
+fold_hflk_m3_opt1_extended/
+dome_m3_af3_ic_minimized_final*.pdb
+dome_m3_af3_ic_minimized_final*.cif
+
 # Python
 __pycache__/
 *.pyc

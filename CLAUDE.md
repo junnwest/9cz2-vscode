@@ -375,27 +375,36 @@ Scaling is ~linear; speedup and wait time roughly cancel for small jobs. Expect 
 - 2–10 ns → 4–6 nodes (best balance)
 - ≥10 ns → 8–10 nodes
 
-## Current Systems (as of July 17, 2026 — Day 36)
+## Current Systems (as of August 5, 2026)
 
 **Always verify these against the live cluster at session start (Step 3 above).**
 
-**IMPORTANT — Beagle3 is now the primary cluster for all 5 production/equilibration systems.**
+**IMPORTANT — Beagle3 is the primary cluster for all production/equilibration systems.**
 Direct Beagle3 access (`ssh beagle3`, same ControlMaster pattern as `midway3`) was granted July 8 and
 compute submission rights (`beagle3-exusers` account) confirmed shortly after — the earlier "staged,
 awaiting resubmission by Kaylie" workflow described later in this section is now **obsolete**; do not
-follow it. `/project2/haddadian` (shared Lustre storage) is directly readable/writable from both
-Midway3 and Beagle3 login nodes — no need to bounce through Midway3 for cross-cluster file checks.
+follow it.
+
+**CORRECTED Aug 2, 2026 — `/project2` access.** The claim above that `/project2/haddadian` is readable
+from both Midway3 and Beagle3 is **not reliable**. It was unreachable from *both* for ~5 days
+(Jul 28 – Aug 2) — an empty root-owned stub, automount silently not attaching. Root cause: `/project2` is
+served by the **`midway2_cap`** filesystem, i.e. it *is* **Midway2's storage** (verified via
+`mount | grep project2`). **`ssh midway2` is the authoritative host for it** and worked throughout the
+outage. A `Host midway2` block is now in `~/.ssh/config` (same ControlMaster pattern). **Prefer migrating
+any system off `/project2` onto `/scratch/beagle3/junseo/` rather than depending on the automount.**
 
 ### The 5 systems
 
-| Name | Protein content | Lipid composition | Status (July 24, session close) |
+| Name | Protein content | Lipid composition | Status (Aug 3, 2026) |
 |---|---|---|---|
-| `control` | none (membrane-only baseline) | Composition #1 | Conventional NAMD production (job 52611795, 48h — resubmitted to fix a missing `--constraint=a100`, see job-queue snapshot below) **and** GaMD equilibration (job 52610940, from `step7_21` — see correction below) in parallel |
-| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | Conventional NAMD production **continuing** (job 52595314, 48h, `TARGET_NS` cap removed July 24) **and** GaMD equilibration (job 52527113) — both running in parallel, not sequential |
-| `dome-bact` | dome only | Composition #2 | Same as `dome-model`: conventional NAMD production continuing (job 52595315, 48h) **and** GaMD equilibration (job 52527114) in parallel |
-| `full-model` | full dome + FtsH | Composition #1 | Conventional NAMD production (job 52609176, 48h; 1 GPU offload) **and** GaMD equilibration (job 52610941, from `step7_20`) in parallel |
-| `full-bact` | full dome + FtsH | Composition #2 | Production continuing (job 52595316, 48h; 10.05 ns cumulative as of session close). **GaMD not yet started** — waiting until it crosses 20 ns |
-| `martini-dome` (optional) | dome only CG (24-chain Martini 3 protein) | Real Model composition (DPPE 70/POPG 12.5/DOPG 12.5/TOCL 5 — no longer redistributed, see July 22–24 Martini section) | Equilibrated, production running (job 52594023) |
+| `control` | none (membrane-only baseline) | Composition #1 | **Running.** Production **96.53 ns** — 52898469 finished clean and sat idle until resubmitted as **53032667**. GaMD segment 2 (job 52955067), boost **active** (E,k nonzero). Stays **offload** — see the rejected resident migration below |
+| `dome-model` | dome only (24 HflK/HflC chains, no FtsH) | Composition #1 | **Running.** On `/scratch/beagle3/junseo/dome-model/{namd,gamd}/` since the Aug 2 migration. Production **44.05 ns** — 52900855 hit the `MAX_CHUNKS=12` cap and sat idle until resubmitted as **52976021**. GaMD 52901280 still in cMD phase (E,k = 0) |
+| `dome-bact` | dome only | Composition #2 | **Running.** Production 68.00+ ns (job 52955069). GaMD segment 2 (job 52955068), still in cMD phase (E,k = 0), **~302 h ≈ 12.5 days remaining** (2.2× slower/step than control). Its `gamd_resident_val/` holds the reproducer for the rejected resident-mode bug |
+| `full-model` | full dome + FtsH | Composition #1 | **SUPERSEDED — do not run.** FtsH is only residues 31–97 of ~644 (see FtsH section below). Frozen at 37.05 ns on `/project2`. Being rebuilt in CHARMM-GUI with an AlphaFold-completed protease |
+| `full-bact` | full dome + FtsH | Composition #2 | **SUPERSEDED — do not run.** Same reason. Jobs cancelled Aug 2 at 40.05 ns (`full-bact-prod`, and `gamd-full-bact-equil` which had 2d18h accumulated) |
+| `martini-dome` (optional) | dome only CG (24-chain Martini 3 protein) | Real Model composition (DPPE 70/POPG 12.5/DOPG 12.5/TOCL 5) | **Three restraint variants built and run** — see "Martini restraint schemes" below. v1 (elastic only) is **invalid**; v2 (flat-bottom) 1,084 ns; v3 (Go) 1,703 ns. A v4/v5/v6 50 ns sweep is queued |
+
+**Only `control` + the two dome systems should be running** until the full-system rebuild lands.
 
 **CORRECTION (July 24) — the earlier "20 ns cap, conventional MD done, GaMD runs after" framing was
 misleading and has been reversed.** `TARGET_NS=20` was never meant to permanently stop conventional NAMD
@@ -423,7 +432,7 @@ dynamics — the exact thing we study. See progress log. (The separate, fully-CG
 system above is a different, complementary effort — a speed/sanity check, not this hybrid approach.)
 
 **GaMD technical notes (verified July 22, 2026):**
-- **Resident mode is incompatible with GaMD** (tested, job 52473685: NAMD FATAL-errors at startup with `GPUresident is incompatible with... accelMD` and related options). The fast ~8 ns/day resident production is off the table — GaMD structurally requires offload mode.
+- **Resident mode is incompatible with GaMD in _stock_ NAMD** (tested, job 52473685: NAMD FATAL-errors at startup with `GPUresident is incompatible with... accelMD` and related options). **Superseded for Chen's build** — see "GPU-resident GaMD" section above and the Chen-build entry below; that branch runs GaMD in resident mode at 8.57 ns/day. Stock NAMD still requires offload.
 - **2-GPU offload GaMD benchmark** (job 52473718): 0.0844 s/step = **~2.0 ns/day** (1.28× speedup over 1 GPU). Scaling is moderate (GaMD boost overhead doesn't parallelize as cleanly as plain dynamics), but real.
 - **GaMD equilibration timeline for dome systems** (52 ns target): ~26 days wall-clock, running both `dome-model` and `dome-bact` GaMD in parallel on separate 2-GPU allocations.
 - **Recommendation**: Launch both dome GaMD runs on 2 GPU / 16 PE offload (Rajiv's templates used 1 GPU; bumping to 2 saves ~one week per system).
@@ -484,7 +493,410 @@ created as a **symlink** to the still-live `martini-dome-cg/` (has job `martini-
 `{namd,gamd}/` migration not started — `control-prod`/`full-model-prod`/`full-bact-prod` all live as of
 this session's close, wait for each to idle before touching its directory.
 
-### Beagle3 job queue snapshot — July 24, 2026, session close (start here next session)
+### FtsH is only ~10% modeled — full systems being rebuilt (found Aug 2, 2026)
+
+**The deposited 9CZ2 structure resolves only residues 31–97 of FtsH's ~644.** Verified directly from the
+CIF (`label_asym_id` Y, AA, BA, JA all give 31–97, 67 residues) — the entire cytoplasmic AAA+ ATPase ring
+and M41 protease domain were unresolved at 4.4 Å. Rajiv's `9cz2-full-minimized.pdb` briefly had 1–120
+(sequence-verified 120/120 against the FtsH FASTA), but that did not survive into the AF3-updated
+structure. **All prior gap-filling (HflK M1–M3, HflC 161–190) was dome-only; FtsH was never addressed.**
+
+Consequence: `full-model`/`full-bact` contain a dome plus a small FtsH TM stub with **no catalytic
+machinery at all**. Any question about proteolysis, substrate engagement, or ATPase-driven dynamics is a
+non-starter with those builds. The dome-opening question itself is not directly compromised.
+
+**FtsH segment naming in the current PSFs** (determined empirically from residue ranges — CHARMM-GUI's
+`PRO*`/`PRA*` naming does **not** map to the older documented `Y,Z,0-9` scheme):
+- FtsH = `PRAA`–`PRAJ` + **`PROY`** + **`PROZ`** — 12 segments, all resid 31–97, 1090 atoms each
+- `PROY`/`PROZ` are easy to mistake for dome chains; they're FtsH, distinguished only by residue range
+- VMD selection: `segname PRAA PRAB PRAC PRAD PRAE PRAF PRAG PRAH PRAI PRAJ PROY PROZ`
+
+**AF3 hexamer job**: `ftsh_hexamer_af3server.json` (repo root) — full 644-residue sequence × 6, with the
+resolved 31–97 fragment as a custom template (`queryIndices` 30–96 ↔ `templateIndices` 0–66, 0-based).
+Two failures fixed while building it:
+1. Job name rejected — AF3 Server allows only letters/numbers/spaces/dashes/underscores/colons (no commas)
+2. `Model inference failed` — the template mmCIF included **explicit hydrogens** (source was an all-atom
+   CHARMM36m NAMD structure; real deposited templates have none). Heavy-atom-only rebuild (1090 → 544
+   atoms) uploaded successfully
+
+**CORRECTION to an earlier claim**: the AF3 **Server does** support custom templates. The `alphafoldserver`
+JSON dialect has a `templates` field taking raw `mmcif` + `queryIndices`/`templateIndices` — confirmed in
+the official `google-deepmind/alphafold` `server/example.json`. (`maxTemplateDate` is capped at 2025-02-03;
+later values are silently clamped.)
+
+---
+
+### Martini restraint schemes — v1 invalid, v2/v3 compared against all-atom
+
+**v1 was scientifically invalid.** The original `martinize2` run used `-p backbone -maxwarn 100` with
+**no `-elastic` flag** (confirmed from the command recorded in the `.itp` header). `-p backbone` restrains
+only local secondary structure — nothing held tertiary fold or the 24-chain quaternary arrangement.
+**Do not use `md_prod1_*.xtc` / the original 1,131 ns run for any structural analysis.**
+
+**Two separate diagnoses were needed before the real problem was visible:**
+1. **PBC wrapping artifact.** After adding `-elastic` the dome still looked shattered. 641 of 1,228 frames
+   had atoms jumping >5 nm, max 271 Å ≈ full box width. `trjconv -pbc mol -center` → **0 of 1,228**.
+   **Always PBC-correct Martini trajectories before visualization** — `cg_bonds.tcl` otherwise draws bonds
+   across the box and the dome appears to explode.
+2. **Real finding underneath**: whole-assembly RMSD (26.7 Å) is >2× per-chain RMSD (~12 Å) — chains stay
+   folded but slide relative to each other, because v1 had *no inter-chain restraint at all*.
+
+**The three variants** (all dome-only, composition #1, same membrane):
+
+| | intra-chain | inter-chain | length |
+|---|---|---|---|
+| **v1** elastic | elastic network (ef 700) | **none** | 1,228 ns (invalid) |
+| **v2** flat-bottom | elastic network *(kept)* | 5,015 flat-bottom restraints **added** | 1,084 ns |
+| **v3** Go-Martini | 10,612 Go contacts *(**replaces** elastic)* | 4,663 Go contacts | 1,703 ns |
+
+Elastic is **intra-chain only** in this project because chains were martinized separately (24 invocations),
+so the tool never saw two chains at once. v3 ran `-go` on the whole complex, so it detected cross-chain
+contacts too — and **replaces** the elastic network rather than adding to it (no `-elastic`; zero
+rubber-band entries in `molecule.itp`).
+
+**Elastic vs Go, conceptually**: elastic = unbreakable harmonic springs between beads that were close in
+the input structure. Go = attractive Lennard-Jones-like wells at *native contacts*, which **can break and
+re-form**. Neither anchors atoms to a point in space — both are **pairwise distance** restraints, referenced
+to the input structure (elastic/Go from the AA structure; v2's flat-bottom from the `insane`-packed CG
+structure). This matters for the opening question: Paper 2 reports the opening originates in the
+**coiled-coil domain**, i.e. possibly an intra-chain hinge — which an unbreakable elastic spring would
+suppress but a Go contact would permit.
+
+#### AA-vs-CG comparison — the key result
+
+Comparison basis: **AA `CA` atoms vs CG `BB` beads, 8,040 each, mapping 1:1.** AA is the reference —
+CHARMM36m, zero structural bias, verified zero restraints in `step7_production.inp`.
+
+**The all-atom systems contract too**, so the dome closing seen in CG is **real physics, not a restraint
+artifact**:
+
+| | Rg(ring plane) | change | plateaus |
+|---|---|---|---|
+| **AA dome-model** (32 ns) | 79.65 → 76.19 Å | **−3.40** | ~13 ns |
+| **AA dome-bact** (44 ns) | 79.64 → 78.15 Å | **−1.88** | ~26 ns |
+
+Ranking over a matched 0–32 ns window:
+
+| variant | ΔRg_xy (ring) | ΔRg_z | RMSD |
+|---|---|---|---|
+| **AA dome-model (ref)** | **−3.40** | **+1.72** | **8.74** |
+| v1 elastic | −1.70 | −1.54 ✗ | 16.48 |
+| v2 flat-bottom | **−1.90** ✓ | −0.94 ✗ | 13.17 |
+| v3 Go | −0.14 ✗ | +0.50 ✓ | 11.27 |
+
+**No clean winner.** v2 best on ring width (the opening observable); v3 the only one with the correct
+vertical *direction*; v1 nearly 2× AA's total motion. Two honest caveats:
+- **v2's edge is partly luck** — its restraints use `low = 0.000`, so the zero-force zone reaches zero
+  separation. They resist chains moving *apart* but exert **nothing** against closing, which happens to be
+  the direction AA moves. They are one-sided.
+- **v3 pre-compacted during equilibration** — it starts production at Rg_xy 76.53, essentially AA's
+  *endpoint* (76.25), then holds. It lands on a plausible value by pinning rather than by dynamics.
+
+**Framing for the science**: any *inter-chain* bias is question-begging for a quaternary observable like
+dome opening. Martini has no unbiased option (coarse-graining removes the physics that holds folds), so the
+question is which bias is least harmful. **The AA systems remain the primary evidence** — consistent with
+this project's original intent that Martini is a speed sanity check, not a replacement.
+
+#### v4/v5/v6 sweep (queued Aug 3)
+
+The AA reference window is only 32 ns, so **50 ns CG runs suffice** (~35 min each at ~2,000 ns/day) —
+a sweep is a few GPU-hours, not days.
+
+| variant | change | isolates |
+|---|---|---|
+| **v4** (52966615) | Go **intra-chain only** — 4,663 inter-chain contacts deleted | is inter-chain rigidity what froze ring width at −0.14? |
+| **v5** (52966616) | Go with **ε 9.414 → 5.0** | is it contact *strength* rather than coverage? |
+| **v6** (52967586) | **v2** with elastic **ef 700 → 300** | does softer stiffness fix the reversed vertical direction? |
+
+v4/v5 derived from v3's topology by editing **only `go_nbparams.itp`** (no `martinize2` rerun); v6 is
+drop-in compatible with the v1/v2 structure. Each isolates exactly one variable.
+
+**Caution**: with six variants against a single 32 ns AA reference, picking the best-matching one shades
+into fitting rather than validating. If v4 wins on principle *and* numbers that's a real result; if the
+winner is just whatever lands closest after a wide sweep, that's much weaker evidence.
+
+##### RESULTS (Aug 4) — v4/v5 done, v6 rerunning; the Go family's comparison is invalid
+
+v4 (52966615) and v5 (52966616) both completed 50 ns at ~2,180 ns/day. **v6 (52967586) failed in 1 s**
+on a literal `$SLURM_SUBMIT_DIR` (heredoc escaping fault) — resubmitted as **53032654**.
+
+| variant | design | ΔRg_xy | ΔRg_z | RMSD | err |
+|---|---|---|---|---|---|
+| **AA dome-model** | CHARMM36m, no bias (ref) | **−3.40** | **+1.72** | 8.74 | — |
+| v1 elastic | ef 700, no inter-chain | −1.70 | −1.54 ✗ | 16.48 | 1.70 |
+| v2 flat-bottom | elastic + 5,015 inter | −1.90 | −0.94 ✗ | 13.17 | **1.49** |
+| v3 Go | 10,612 intra + 4,663 inter | −0.14 | +0.50 ✓ | 11.27 | 3.26 |
+| **v4** Go intra-only | inter-chain deleted | −0.76 | +0.85 ✓ | **21.27** | 2.64 |
+| **v5** Go weak | ε 9.414 → 5.0 | −1.09 | +1.22 ✓ | 14.93 | 2.31 |
+
+Within the Go family **v5 > v4 > v3** on every metric — so **contact strength matters more than contact
+coverage**. v4's RMSD 21.27 is the **worst of all six**: deleting inter-chain contacts reproduced v1's
+failure mode (chains stay folded but slide), so the "inter-chain rigidity froze the ring" hypothesis
+gets only weak support.
+
+**But the absolute values invalidate the whole Go-vs-AA comparison:**
+
+| variant | Rg_xy start | Rg_xy @32 ns | gap to AA end |
+|---|---|---|---|
+| AA (reference) | **79.65** | 76.25 | — |
+| v1 elastic | 79.00 | 77.30 | +1.04 |
+| v2 flat-bottom | 79.51 | 77.60 | +1.35 |
+| v3 Go | **76.53** | 76.39 | +0.14 |
+| v4 Go intra-only | **75.76** | 75.00 | **−1.26** |
+| v5 Go weak | **76.14** | 75.05 | **−1.21** |
+
+**Every Go variant starts production already collapsed** — ~76 Å, essentially AA's *endpoint* (76.25),
+~3.5–4 Å tighter than AA's start. They never had the contraction available to reproduce; equilibration
+under the Go contact map had already done it (Go builds attractive wells at native contacts; 15,275 of
+them over-pull the assembly — a documented Go over-compaction mode). v4/v5 then finish **below** AA's
+endpoint. v1/v2 start where AA starts.
+
+**Comparing Go deltas to AA deltas is not a fair comparison.** The Go family's problem is more
+fundamental than contact strength or coverage. **v2 remains best on the opening observable**, caveats
+intact (one-sided `low = 0.000`; reversed vertical). **AA remains the primary evidence.**
+
+**Next test**: v7 at ε ≈ 2.5 — but the diagnostic is now whether it **reduces pre-compaction at
+production start**, not the production-phase delta. v6 is elastic-based so it should start near 79 like
+v1/v2, making it the more informative outstanding run.
+
+**If v6 does not fix the reversed vertical direction**, the cause is likely **not** the protein restraints
+but the CG **membrane** — cardiolipin is modeled as `TOCL` for both `LOACL1` (exact match) and `TLCL1`
+(tetralinoleoyl 18:2, **no Martini 3 template exists**, `TOCL` is a stand-in). No restraint scheme fixes that.
+
+#### Go-Martini operational costs and gotchas
+
+- **`grompp` takes ~1 hour.** Go creates **one atomtype per residue (8,040)** → ~66-million-entry nonbonded
+  matrix. The `.tpr` is **703 MB**. Both eq and production `grompp` pay it — budget wall time accordingly
+  (a 2h job died mid-way).
+- **Contact-map generation needs ~200 GB.** OOM-killed twice on the 24 GB Mac (and inside a 7.75 GB Docker
+  container — but the machine itself ran out: 8.9 of 10 GB swap consumed). Run it on `beagle3-bigmem`.
+- **`make_ndx` group numbers are NOT stable across systems.** The Go system emitted separate `NA`, `CL`
+  *and* combined `ION` groups (the original had only `ION`), shifting numbering so a `name 19 ...` command
+  silently renamed the wrong group → chloride in both thermostat groups → `Fatal error: Atom N in multiple
+  T-Coupling groups`. **Generate the index directly from resnames instead**, and assert the tc-groups
+  partition the system with zero overlap. The error surfaces ~1h late, after `grompp` builds the matrix.
+- **Atom-serial hex overflow**: PDBs >99,999 atoms may use **hexadecimal** serials (`186a0`), which vermouth
+  rejects. Renumber with wrapped decimals first.
+- **Building the membrane**: insert the Go virtual sites into the **already-validated packed system** rather
+  than re-running `insane`. The Go structure's atoms 1–18264 are byte-identical to the original protein
+  block with the 8,040 `CA` sites appended (18265–26304). Repacking would double bead density at every
+  backbone position and invalidate the tuned `-fudge 0.9` exclusion.
+- `-DPOSRES` is a **no-op** with `martinize2 -go` unless `-p backbone` was also passed — the topology has no
+  `[position_restraints]`.
+
+---
+
+### mdp errors found by comparing against CHARMM-GUI's official Martini protocol (Aug 1, NOT yet fixed)
+
+A fresh CHARMM-GUI Martini build (`charmm-gui-8542787498`, in `~/Downloads/`) supplied the official README
+and mdp ladder. Comparing:
+
+1. **`em.mdp` uses the wrong electrostatics.** Ours: `coulombtype = PME`, **no `epsilon_r`** (defaults to 1),
+   `rcoulomb/rvdw 1.2`. Martini 3 is parameterized with **`epsilon_r = 15`** and reaction-field at 1.1 —
+   which our own `eq.mdp`/`md.mdp` correctly use. EM therefore minimizes with electrostatics ~15× too
+   strong. The file's own comment ("matches martini_md_template.mdp for consistency") is **wrong**.
+2. **`eq.mdp` uses all-atom water compressibility** `4.5e-5`. Martini water is a 4-to-1 bead, ~7× more
+   compressible — CHARMM-GUI and our own `md.mdp` both use **`3e-4`**.
+3. **We skip the gradual ladder.** CHARMM-GUI: soft-core min (`free-energy`, `sc-alpha=4`) + regular min +
+   **5 staged equilibrations** ramping dt 0.002→0.020 while releasing lipid-headgroup z-restraints
+   (`BILAYER_LIPIDHEAD_FC` 200→100→50→20→10) over ~4.75 ns. Ours: 1 min + 1 ns at dt=0.01 → dt=0.02 production.
+
+**Our production `md.mdp` is correct** and matches CHARMM-GUI almost exactly. These are EM/eq issues only,
+and are **not** the cause of the dome disorganization (that was the missing elastic network), though they
+may contribute to the early transient. **Deliberately not fixed** — the running v2/v3 comparison was
+prioritized over re-doing equilibration.
+
+#### Follow-up (Aug 4): protein-system comparison + a staged replacement is now prepared
+
+Built **1AFO** (glycophorin A TM dimer) in CHARMM-GUI as `charmm-gui-8579367020` to answer: *does the
+protocol change when a protein is present?* **1A3N hemoglobin failed first** — it is soluble with no TM
+region, so `step2_orient` never produces a membrane-embedded system. (It also hit "No lipid was
+selected... system is too small": an XY guess of 10 Å gave an 18.67 Å box smaller than the protein.)
+
+**Answer: exactly one difference — an added protein POSRES ramp.** The timestep ladder and step counts
+are **byte-identical** to the membrane-only build (8542787498):
+
+```
+step6.2  -DPOSRES_FC=1000  -DBILAYER_LIPIDHEAD_FC=200   dt 0.002  500000
+step6.3  -DPOSRES_FC=500   -DBILAYER_LIPIDHEAD_FC=100   dt 0.005  200000
+step6.4  -DPOSRES_FC=250   -DBILAYER_LIPIDHEAD_FC=50    dt 0.010  100000
+step6.5  -DPOSRES_FC=100   -DBILAYER_LIPIDHEAD_FC=20    dt 0.015   50000
+step6.6  -DPOSRES_FC=50    -DBILAYER_LIPIDHEAD_FC=10    dt 0.020   50000
+```
+Total 4.75 ns. So this is **not** a protein-specific protocol — it is the standard ladder plus a
+restraint ramp.
+
+**Production `md.mdp` confirmed matching** on every physics parameter. Two cosmetic differences only:
+3 thermostat groups vs our 2, and `verlet-buffer-tolerance 0.005` vs our pinned `rlist 1.35`.
+*(Gotcha: our mdp uses hyphenated keys — `tau-t`, `ref-t`, `tau-p` — so grepping `tau_t` finds nothing
+and falsely suggests the settings are missing.)*
+
+**A third eq gap, not in the Aug 1 list:** our `M3-Lipid-Parameters` lipid `.itp`s contain **no
+`[position_restraints]` block at all**, so `-DBILAYER_LIPIDHEAD_FC` is a **silent no-op** for us —
+not merely "we skip the ladder," but "the lipid half cannot work even if enabled."
+
+**Prepared, NOT applied — `scripts/martini_staged_eq/`:**
+- `step6.{2,3,4,5,6}_equilibration.mdp` — the ladder, physics inherited from our KALP-validated `eq.mdp`
+- `add_lipid_headgroup_posres.py` — patches DPPE/POPG/DOPG (phosphate = bead 2) and TOCL (**both**
+  phosphates, beads 2 and 13; cardiolipin spans the leaflet as one molecule). Indices read off our
+  actual `[atoms]` blocks; hard-fails if an index exceeds the molecule's atom count. Idempotent, `.bak`.
+  Restrains **z only** — lateral diffusion untouched.
+- **Fixes item 2 above in passing** (`compressibility` 4.5e-5 → 3e-4). **`em.mdp`'s PME/`epsilon_r` bug
+  (item 1) is still open.**
+- **Held back deliberately**: all six Martini variants share the current 1 ns equilibration, making it a
+  controlled variable; changing it mid-sweep would break comparability. Apply after the sweep reads out.
+- ⚠️ **Go variants get no protein restraint from this** — v3/v4/v5 topologies contain zero
+  `[position_restraints]` (`martinize2 -go` ran without `-p backbone`), so `-DPOSRES` is a no-op there.
+  Lipid half still works. v1/v2 are fine.
+
+**Not the cause of the dome contraction** — AA contracts too (−3.40 Å). At most this affects early
+strain and contraction rate.
+
+---
+
+### Cluster operations — things that cost time this session
+
+- **`beagle3-0006` is a bad node.** Killed 4 jobs instantly (1–2 s, **zero output files**, `Reason=None`)
+  while reporting `STATE=MIXED`. Now in `--exclude` on all production/GaMD sbatch scripts. Distinguishing
+  feature vs a config error: config failures still write a `.err`; this node writes nothing.
+- **CPU-only jobs must not go to the GPU partition.** RCC (Dossay Oryspayev) flagged job 52831054
+  (`martinize-go-dome`, 50 min, no GPU). **Use `--partition=beagle3-bigmem`** — 4 nodes, **512 GB each, no
+  GPUs**, usually idle. Applies to `martinize2`, `trjconv`, and `grompp`-only jobs.
+- **`COMPLETED` / exit 0 does not mean success.** Hit twice more this session: a `martinize2` job that
+  crashed on import in 10 s, and a monitor that read an empty `sacct` result (dead SSH socket) as "no jobs
+  running." **Always check for real output files.**
+- **GaMD restarts after a 96h timeout** must (a) write to a **new `outputName`** — otherwise the previous
+  segment's DCD is overwritten (9.35 GB was at risk), (b) set `accelMDGRestart on` **with**
+  `accelMDGRestartFile`, and (c) set `firsttimestep` to the true absolute step so the cMD/equilibration
+  phase boundaries evaluate correctly. Note the `.gamd` file's `Vn` field is samples in the *current
+  statistics window*, not the absolute step (windows reset every 1.5M steps).
+- **macOS `rsync` is old BSD rsync** — no `--info=progress2`; use `--progress`. Exit 23 with
+  `fchmodat ... Operation not permitted` is a harmless permission-bit warning, not a failed transfer.
+- **Concurrent transfers to one host share a single multiplexed SSH connection** and throttle each other
+  (~3 MB/s each vs ~9 MB/s alone). Transfer sequentially.
+
+#### Added Aug 4–5, 2026
+
+- **Beagle3's GROMACS binary is `gmx_mpi`, not `gmx`.** `module load gromacs/2025.3` then calling `gmx`
+  gives `command not found`. Applies to `trjconv`/`grompp`/`check` too, not just `mdrun`.
+- **`-deffnm` names outputs, not the tpr.** The Martini sweep ran `grompp -o md_v.tpr` then
+  `mdrun -s md_v.tpr -deffnm prod_v`, so the trajectory is `prod_v.xtc` but the tpr is **`md_v.tpr`** —
+  `trjconv -s prod_v.tpr` fails. **List the directory instead of inferring filenames from `-deffnm`.**
+- **Write sbatch scripts locally and `scp` them; do not heredoc them over ssh.** A `\$` escaping fault
+  produced a literal `$SLURM_SUBMIT_DIR` and killed **three** jobs across two scripts (52973301
+  resident-validation, 52967586 v6-sweep) — each dying in 1–2 s with only a `cd:` error.
+- **macOS BSD `sed` does not support `\b`.** An `s/\bgmx /gmx_mpi /g` silently changed nothing and the
+  unfixed file was submitted anyway. **Verify a `sed` actually changed the file before acting on it.**
+- **`--exclude` drift**: `beagle3-0006` was missing from 5 sbatch scripts, including `control`'s *live
+  production* script. Audit all of them (`grep -E '^#SBATCH --exclude' */namd/*.sbatch */gamd/*.sbatch`)
+  after any scripted edit — a per-file fix does not propagate.
+- **Production jobs going idle is the recurring failure mode, not crashes.** Both `control-prod`
+  (96.53 ns) and `dome-model-prod` (44.05 ns, hit `MAX_CHUNKS=12` after 12 chunks using 35 h of 48 h)
+  finished cleanly with exit 0 and simply were not resubmitted. Nothing auto-chains across jobs.
+- **Go virtual sites are named `CA`** — 8,040 of them sitting exactly on the `BB` beads in v3/v4/v5.
+  Any protein selection needs `and not name CA` or every backbone bead renders twice.
+
+---
+
+### GPU-resident GaMD — reference config for lab-mates
+
+`share_gamd_resident/` (repo root) holds the verified-working resident-mode GaMD config, submit script, and
+a README. Shared with Juliana Steier (Aug 3) after she hit `atoms moving too fast`.
+
+Requires **Dr. Chen's build** — stock NAMD 3.0.1 FATAL-errors on `CUDASOAintegrate` + `accelMD`:
+`/scratch/beagle3/junseo/namd-chen-gpuresident/Linux-x86_64-g++/namd3`. **Invoke by full path**, never bare
+`namd3` (the stock module silently wins otherwise), and load `cuda/11.5` rather than any `namd` module.
+
+Settings that matter for resident-mode stability (diagnosed from her failing config):
+- **`fullElectFrequency 1`** — not 2. Multiple timestepping conflicts with the resident integration loop.
+- **`wrapWater on` / `wrapAll on`** — NAMD's default is *off*, so commenting the line out genuinely disables
+  wrapping; coordinates then drift out of the cell and trigger patch-migration errors.
+- **`pairlistdist 16.0`** with cutoff 12 (a 2 Å buffer is tight, especially under GaMD's boost).
+
+Caveat: resident mode is **system-dependent**. Dome-only systems run fine; the FtsH systems crash with this
+exact error even with correct settings, and could **not** be rescued by a minimize/reinitvels warm-up —
+those run in offload mode (`CUDASOAintegrate off`), stable but ~4× slower. (That crash was in *conventional
+production*, not GaMD — we never got as far as trying GaMD-resident on the FtsH systems, and now won't,
+since both are superseded.)
+
+#### Migrating production GaMD to resident mode — **REJECTED, validation FAILED (Aug 4, 2026)**
+
+> **DO NOT run GaMD in GPU-resident mode on Chen's build. The boost statistics are corrupted.**
+> All three GaMD runs stay on **offload / stock NAMD 3.0.1**. The ~4 weeks of wall-clock below stays
+> unrecovered — that is the correct trade. Everything from "Validation before switching" onward is the
+> plan that was executed; the result is here.
+>
+> **What the validation found** (job 52975499, 200,000 steps, `dome-bact/gamd_resident_val/`):
+>
+> | quantity | resident | offload | %diff |
+> |---|---|---|---|
+> | potential | −4,836,496.27 | −4,836,863.72 | **−0.008** |
+> | total | −3,707,490.55 | −3,707,622.58 | **−0.004** |
+> | DIHED Vmin | **0** | 223,257 | — |
+> | TOTAL Vmin | **−2.39e+07** | −5.07e+06 | — |
+> | TOTAL sigmaV | **5.18e+06** | 1,139.87 | **+454,000%** |
+>
+> Both runs are **identical on the first statistics line** (so both read the restart correctly). On the
+> **second**, resident's `Vmin` collapses — DIHED to exactly `0`, TOTAL to −2.39e+07. `Vmin` is a running
+> minimum, so it never recovers; `Vavg` then drifts monotonically and `sigmaV` grows without bound.
+>
+> **The corrupted value was never sampled.** Actual potential energy over that run spans only
+> −4,839,454 … −4,834,182, with **zero frames** below −1e7. A DIHED `Vmin` of exactly `0` reads like an
+> uninitialized value entering the accumulator.
+>
+> **Why the energies still matched — and why that is a trap:** `dome-bact` is in the cMD phase
+> (E = k = 0), so no boost is applied yet. The dynamics are fine; the corruption is confined to the
+> accumulator that *later* sets the boost. Switching now would have made the first boosted step use a
+> `sigmaV` ~4,500× too large → wrong boost → invalid reweighted free energy surface.
+> **The earlier 5,000-step smoke test looked clean because it checked energies, not boost statistics.**
+>
+> Resident speed was confirmed real (**8.22 ns/day** vs ~2.77 offload at 2 GPU, ~3×). The problem is
+> correctness, not performance. **Reproducer kept**: `dome-bact/gamd_resident_val/` +
+> `compare_resident_offload.py`.
+
+**Chen's build had only ever been smoke-tested (5,000 steps). Migrating looked worth ≈4 weeks of
+wall-clock:**
+
+| | step | remaining | offload ETA | resident ETA (~10×) |
+|---|---|---|---|---|
+| `control` | 12.85M / 22.5M | 9.7M | ~75 h | ~8 h |
+| `dome-bact` | 5.64M / 22.5M | 16.9M | **~300 h (12.5 d)** | ~30 h |
+| `dome-model` | 2.17M / 22.5M | 20.3M | **~360 h (15 d)** | ~36 h |
+
+**`dome-bact` and `dome-model` still show E = k = 0** — still in the cMD phase, boost not yet computed.
+That is the cleanest moment to change engines (no accumulated boost statistics to perturb). `control` has
+active boost (E = 150011, k = 1.57e-4), so switching it mid-stream is a bigger change.
+
+**Validation before switching** (job 52973301, `dome-bact/gamd_resident_val/`):
+- Branches from `dome-bact`'s **segment-1** restart (step 5,410,000) — a *static* file. **Do not branch from
+  `gamd-equil2.restart.*`**, which the live job is actively writing.
+- 200,000 steps resident on Chen's binary; all other physics/GaMD parameters identical.
+- **Offload reference is free** — the running job already logged the identical step range.
+- `compare_resident_offload.py` (in that directory) reports ensemble averages and, critically,
+  **Vmax/Vmin/Vavg/sigmaV** for both boosts. Langevin is stochastic, so trajectories *will* diverge —
+  step-by-step agreement is not the test; ensemble agreement is.
+- **Criterion**: energies within ~0.1% and sigmaV within a few % ⇒ switch all three. A large sigmaV
+  divergence means the boost itself differs, which would change the reweighted free energy surface.
+
+**Open question with Dr. Chen** (emailed Aug 3): whether any accuracy tradeoff is known for GaMD
+specifically in resident mode. Resident/offload equivalence is understood for conventional MD, but the
+boost depends on running statistics accumulated on the fly, and it is unclear whether the resident
+reorganization changes how or when those are collected.
+
+**ANSWERED empirically Aug 4 — yes, and it is a bug, not a tradeoff.** GPU-resident mode feeds a
+spurious value (`0` for DIHED, ~−2.4e7 for TOTAL) into the GaMD statistics accumulator on the first
+update after a restart, permanently poisoning `Vmin` and inflating `sigmaV` by ~4,500×. The `ENERGY:`
+output over the same window is correct to 0.008%, so the fault is in the **statistics path, not the
+force/integration path**. **Still to send to Dr. Chen** — reproducer is
+`dome-bact/gamd_resident_val/` + `compare_resident_offload.py`.
+
+### Beagle3 job queue snapshot — July 24, 2026 (SUPERSEDED — historical only)
+
+> **Do not start here.** Every job ID below is long finished. See the "Current Systems" table above for
+> the Aug 3 state. Kept for the reasoning it records (the GaMD-expansion correction, the PE-fixed
+> benchmark numbers, the wall-time convention). Note also that the "GaMD expanding to 4 of 5 systems"
+> framing is now obsolete: the two `full-*` systems are superseded pending the FtsH rebuild, so GaMD runs
+> on `control`, `dome-model`, and `dome-bact` only.
 
 **Morning startup checklist:**
 1. `ssh beagle3 "squeue -u junseo"` — compare against the table below.
@@ -1089,3 +1501,43 @@ Key script: lipid analysis (select/color lipids around the protein).
   - Project path: `/scratch/midway3/junseo/26summer-research/`
   - Rajiv's scripts: `/project2/haddadian/rajiv/analysis`
 - SSH config: `~/.ssh/config` — ControlMaster auto, ControlPersist 1h, ServerAliveInterval 60
+
+### Local trajectory copies — `trajectories/` (organized Aug 1, 2026)
+
+Working copies for visual inspection live in `trajectories/` at the repo root.
+**Gitignored** (`trajectories/` added to `.gitignore`) — the cluster copies on
+Beagle3 `/scratch/beagle3/junseo/` remain authoritative. ~33 GB.
+
+```
+trajectories/
+├── README.md                  ← VMD load commands, selection strings, caveats
+├── namd/                      all-atom (CHARMM36m)
+│   ├── dome-bact/   eq + 44 ns   (cluster is ahead — 56 ns)
+│   ├── full-bact/   eq + 20 ns   (cluster is ahead — 40 ns)
+│   └── full-model/  37 ns, production only (no eq pulled)
+└── martini/                   coarse-grained (Martini 3)
+    ├── v1_elastic/     1,228 ns — elastic network only, NO inter-chain (broken baseline)
+    ├── v2_flatbottom/  1,084 ns — v1 + 5,015 flat-bottom inter-chain restraints
+    └── v3_go/          1,703 ns — Go-Martini, 10,612 intra + 4,663 inter-chain
+```
+
+**Read `trajectories/README.md` before loading anything** — it has the per-variant
+load commands and the non-obvious gotchas. The ones that actually bite:
+
+- **v3_go needs its OWN topology** (`dome_go_membrane_system.gro/.top`, 185,885 atoms)
+  — it carries 8,040 massless Go virtual sites that v1/v2 (177,845 atoms) don't have.
+  Using the shared `dome_martini_system.gro` fails with an atom-count mismatch.
+- **`cg_bonds -top` needs a `./` prefix** (`-top ./dome_martini_system.top`). The
+  script derives its `#include` search path by splitting the `-top` argument on `/`,
+  so a bare filename resolves includes to `/martini_ff/...` and errors out.
+- **VMD's `protein` macro is unreliable on Martini CG beads** (they're `BB`/`SC1`/…,
+  not `CA`/`N`/`C`). Use `not resname DPPE POPG DOPG TOCL W NA CL` instead.
+- **Cardiolipin resname differs by resolution**: `TOCL` in Martini CG vs
+  `LOACL1`/`TLCL1` in the all-atom NAMD systems.
+- All Martini production files are PBC-corrected (`trjconv -pbc mol -center`) and
+  decimated to 1 ns/frame. **The PBC step is mandatory** — without it, wrapped
+  molecules make `cg_bonds` draw bonds across the box and the dome renders as if
+  it exploded (this caused a false "collapse" diagnosis, see progress log).
+
+Not held locally: `control` and `dome-model` (the latter blocked by the `/project2`
+outage).
