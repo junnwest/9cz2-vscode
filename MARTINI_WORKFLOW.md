@@ -1,5 +1,12 @@
 # Martini CG Dome System — Ready-to-Run Workflow
 
+> **SUPERSEDED — this is the July 22 planning doc, written before the pipeline was actually built
+> and validated.** Several values below are now known wrong (PME instead of reaction-field, 1.2 nm
+> cutoffs instead of 1.1, `gromacs/2022.4` — a PLUMED-patched build that segfaults on Martini
+> virtual-site construction, use `2025.3`). Kept for historical reference only. **The real,
+> validated recipe is in `CLAUDE.md` under "Martini 3 coarse-grained comparison" (10-step build
+> recipe + selection gotchas + the full v1–v11 restraint-scheme comparison against CHARMM-GUI).**
+
 **Status**: Setup in progress (July 22, 2026)  
 **CHARMM-GUI Job**: 8458753726  
 **Target**: Convert AA dome from CHARMM-GUI → Martini 3 CG → GROMACS production
