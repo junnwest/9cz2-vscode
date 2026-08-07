@@ -22,11 +22,20 @@
 *.tar.gz
 
 # Local trajectory pulls for visual inspection (large — keep on Beagle3/Midway3)
-# Data is ignored, but README.md IS tracked: it holds the VMD load commands and
-# the non-obvious gotchas. Use trajectories/* (not trajectories/) so git still
-# descends into the directory and can see the negation below.
+# Data is ignored, but README.md and the .tcl load/analysis scripts ARE tracked.
+# Use trajectories/* (not trajectories/) so git still descends and can see the
+# negations below. A negated directory (e.g. !trajectories/namd) only un-ignores
+# the directory ENTRY, not its contents — each subdirectory needs its own
+# re-ignore-then-allow-tcl pair, or new large data dropped in there gets committed.
 trajectories/*
 !trajectories/README.md
+!trajectories/load_v1_v6.tcl
+!trajectories/namd
+trajectories/namd/*
+!trajectories/namd/*.tcl
+!trajectories/martini_sweep
+trajectories/martini_sweep/*
+!trajectories/martini_sweep/*.tcl
 dome-bact_traj/
 full-bact_traj/
 
