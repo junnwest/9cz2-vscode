@@ -30,6 +30,7 @@
 trajectories/*
 !trajectories/README.md
 !trajectories/load_v1_v6.tcl
+!trajectories/load_v2_v10_v11.tcl
 !trajectories/namd
 trajectories/namd/*
 !trajectories/namd/*.tcl
