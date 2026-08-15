@@ -7,6 +7,140 @@
 
 ---
 
+## August 8-15, 2026 — GaMD requeue data loss root-caused, full-model/full-bact equilibration debugged,
+## v10/v11 read out (real SS does NOT fix pre-collapse), all-11-variant VMD tooling, idle-job sweep
+
+### GaMD data loss from the Aug 6 maintenance window, root-caused
+
+Reconnected Aug 8 after the maintenance window closed. `control` and `dome-bact` GaMD segment-2 jobs
+were running again under their original job IDs — but their DCD frame counts looked wrong. Parsed
+the DCD header directly (`NSET`/`ISTART` fields) rather than trust the log: both had been **silently
+restarted from the beginning of segment 2**, not resumed. Root cause: Slurm's default `Requeue=1`
+resubmits a preempted job under the same ID, and `gamd-equilN.inp` has a fixed `firsttimestep`
+pointing at the segment's original start — it has no way to know how far the previous attempt got.
+NAMD just reran the whole segment, overwriting the DCD in place.
+
+**Confirmed losses**: `control` lost ~12.76 ns (was at 18.70M/22.5M, restarted at 12.32M), `dome-bact`
+lost ~5.54 ns (was at 8.18M, restarted at 5.41M). Not corrupted — a valid restart from a valid
+checkpoint — just wasted wall-clock, roughly 2.5 days and 1 day respectively.
+
+**Fixed**: `scontrol update JobId=X Requeue=0` on both live jobs (confirmed this works on an
+already-running job, no restart needed), then `--no-requeue` added to every NAMD/GaMD sbatch script
+in the project (audited all of `control`/`dome-model`/`dome-bact`/`full-model`/`full-bact`'s
+production and equilibration scripts — none had it). `run_prod_gpu.sh`-driven production wasn't
+actually at risk (it self-heals by finding the latest completed 1 ns block on restart — verified
+`control-prod`'s `step7_105`→`106` was continuous straight through the maintenance window), but
+patched those scripts too for a cleaner failure mode regardless.
+
+Also restarted `dome-model`'s GaMD (which TIMEOUT'd cleanly, not requeued — no data at risk there)
+via `make_gamd_restart.py`, with `--no-requeue` added to the generated script pre-emptively.
+
+### full-model/full-bact equilibration — two real bugs, one false alarm
+
+**Bug 1**: `full-model-equil` failed instantly — `step5_assembly.str` was never uploaded when the
+system was set up Aug 5 (only `namd/` was copied, not the CHARMM-GUI download's parent directory).
+
+**Bug 2, found while investigating bug 1**: `full-bact`'s `step5_assembly.str` on the cluster turned
+out to be a **Jul 15 leftover from the superseded 31-97 build**, not the Aug 5 rebuild — box
+dimensions differ by several Å (A: 308.3→306.2, C: 201.2→205.8). This one had already been silently
+in use for 9 hours of a real equilibration run (step6.1-6.4 complete) before being caught.
+
+**False alarm, but investigated properly rather than assumed**: checking whether the box was
+actually too small (protein top reaches +144 Å above the membrane, water box only to +104 Å)
+initially looked alarming. User pushed back — asked whether visual inspection should happen before
+committing to a rebuild, which was the right instinct. Built a quantitative version of that check
+instead of a screenshot: periodic-wrap the overflow atoms using the actual box dimensions and
+measure distance to the nearest real protein/lipid atom. Result: **zero clashes within 8 Å even at
+the worst point** — confirmed with both the correct (205.78 Å) and the actually-used wrong (201.21
+Å) box values. The dome's overflow wraps into open bulk water on the far side, not into itself.
+**No rebuild was needed.** Stopped the running job per the user's initial instruction, then
+re-verified this finding, then un-stopped by just fixing the file and resubmitting fresh rather than
+going back to CHARMM-GUI. Lesson banked: "exceeds the declared box" on paper is not the same
+question as "does it actually clash with anything" — check the latter before recommending a rebuild.
+
+Both jobs resubmitted clean (`full-model-equil` 53194227, `full-bact-equil` 53194229) — both reached
+step6.5 of 6 without incident by Aug 10, confirming the fix held.
+
+**Equilibration timing explained, not assumed slow**: step6.4-6.6 have 2× the steps of step6.1-6.3
+(250,000 vs 125,000, read directly from the `.inp` files) — per-step timing matches this exactly
+(steps 1-3 each ~3-3.5h, step 4 took 6h55m). Not a slowdown. Both jobs also share node
+`beagle3-0020` with an unrelated job from another user (`shoutinghs`) — a real, unquantified
+contention factor alongside the step-count explanation.
+
+### v10/v11 read out — the actual answer, and it's not what the working hypothesis expected
+
+Downloaded v10/v11 trajectories (interrupted twice by socket drops and slow transfers before
+succeeding) and ran the same Rg/RMSD script used for v1-v9.
+
+**Result: real secondary structure does NOT fix the pre-collapse problem.** Both v10 and v11 start
+their production window already contracted (Rg_xy0 76.94/77.07 vs AA's 79.65 and v1/v2's 79.00/79.51)
+— the same pre-equilibration-collapse failure mode that invalidated the Go family's comparison. This
+was the specific thing v10/v11 were built to test in the first place; the answer, now that it's
+measured, is that supplying real secondary structure alone doesn't prevent it.
+
+Within that caveat, v10 vs v11 is a genuine split decision, not a clean winner:
+
+| | Rg_xy0 | ΔRg_xy | ΔRg_z | RMSD |
+|---|---|---|---|---|
+| AA (ref) | 79.65 | −3.40 | +1.72 | 8.74 |
+| v10 (no elastic) | 76.94 | **+1.93** (wrong sign) | −1.25 (wrong) | 16.51 |
+| v11 (elastic ef700) | 77.07 | +0.29 (~flat) | **+1.19** (right sign) | 22.45 (worst of all 11) |
+
+v10 drifts less overall (lower RMSD, plateaus after ~8 ns) but its ring actively expands in the
+wrong direction. v11 barely moves in-plane and is the only variant of all 11 to get the *vertical*
+direction right, at the cost of the highest RMSD of any variant and no sign of convergence by 32 ns.
+User asked "which is better" expecting a single answer; the honest answer is that RMSD and shape-
+accuracy disagree here, and neither variant's AA-comparison should be treated as clean given the
+shared pre-collapse issue.
+
+Open question this leaves for whenever it's picked back up: what in the CG system is causing the
+contraction if not secondary structure or restraint scheme — most likely candidate remains the CG
+membrane/lipid parameterization (the `TLCL1`→`TOCL` substitution flagged back in the original v1-v6
+readout), not yet tested directly.
+
+### VMD tooling — all 11 Martini variants, correctly
+
+Built `trajectories/load_v2_v10_v11.tcl` and `trajectories/load_all_martini.tcl`. Both caught real
+bugs by testing headless before handing over, twice:
+- An early version of the v2/v10/v11 script drew v11's elastic bonds from **v6's** topology file via
+  `cg_bonds`. Wrong — v6 (all-coil/ef300) and v11 (real-SS/ef700) have different bonded chemistry
+  entirely; would have rendered the wrong bond network, not just failed. User caught this by
+  reporting "the visualization didn't apply on both" rather than assuming it was fine. Rebuilt as one
+  `proc` applied identically to every variant, each drawing `cg_bonds` from its own topology.
+- Building the all-11 script surfaced that v7/v8/v9's local `.xtc` files were silently truncated
+  (18/1/1 frames instead of 33) — leftovers from the original failed-parallel-download attempt days
+  earlier that never got the same sequential-redownload fix v10/v11 received. Re-downloaded and
+  verified byte-identical to the cluster copies.
+
+Also found: VMD's built-in RMSD Visualizer Tool doesn't work on Martini systems at all — it ANDs
+every selection with a hardcoded all-atom backbone filter (`name C CA N O`), which matches zero
+Martini beads. Every typed selection fails identically, including `protein` and `all`. Documented
+the two workarounds (disable its "Backbone" toggle, or use `measure rmsd` directly).
+
+### Idle-job sweep (Aug 10) and dome-bact local catch-up
+
+Full 15-cell status check found `control-prod`/`dome-model-prod`/`dome-bact-prod` had all finished
+cleanly and sat idle for 8-16.5 h — the project's most common failure mode, caught again. Resubmitted
+all three. `dome-model`/`dome-bact` GaMD had both recovered into the boosted phase after the earlier
+requeue-restart, re-crossing the 7.5M cMD boundary.
+
+Pulled `dome-bact`'s missing 13 ns locally (`step7_81`-`93`) to catch the local copy up to the
+cluster's 93 ns — first parallel attempt timed out (same lesson as always), background sequential
+retry succeeded, spot-verified byte sizes against remote.
+
+### Found and archived Rajiv's lipid-count heatmap script
+
+Searched `/project2/haddadian/rajiv/analysis` (accessed fine via `ssh beagle3` directly this
+session, contrary to the standing "/project2 unreliable" warning — that mount issue may be
+intermittent, not constant) for a heatmap showing per-lipid-species spatial count. Not
+`thickness-map.py` (bilayer thickness, not count) or `plot_lipid_counts.py`/`new_com_lipids.py`
+(both time-series line plots despite the name). The actual match: `lipid_density.py` — 2D XY
+histogram of one lipid species' phosphate positions, `plt.imshow` heatmap, colorbar literally
+labeled "Average lipid count per bin". Downloaded to `scripts/analysis/rajiv_lipid_density.py`
+(prefixed to keep clear it's Rajiv's, not ours), verified byte-identical to source.
+
+---
+
 ## August 6, 2026 (session 2) — three-way CHARMM-GUI comparison, restraint-mechanism deep dive, sscache tool
 
 ### Found a lipid-only CHARMM-GUI Martini build already existed locally

@@ -310,6 +310,30 @@ PSF/PDB/toppar inputs). `dome-model` may still be at its `/project2` staging pat
 Martini variants live at `/scratch/beagle3/junseo/martini-sweep-{v1..v11}/` (method-first, since
 Martini shares nothing with the AA systems).
 
+### Status snapshot — Aug 10, 2026 (last live check; verify fresh at session start)
+
+| | NAMD production/equil | GaMD |
+|---|---|---|
+| `control` | 117 ns | boosted, step 19.03M/22.5M (85%) |
+| `dome-model` | 68 ns | boosted, step 8.24M/22.5M (37%) |
+| `dome-bact` | 93 ns (local copy caught up same day) | boosted, step 8.07M/22.5M (36%) |
+| `full-model` | equilibrating, step6.5 of 6, no crashes on this (3rd) attempt | not started — needs 20 ns production first |
+| `full-bact` | equilibrating, step6.5 of 6 | not started — same |
+
+**All three non-FtsH production jobs had finished cleanly and gone idle for 8-16.5 h** before this
+check caught it — the project's recurring failure mode (exit 0, nothing auto-resubmits). Resubmitted
+all three (`control` 53240018, `dome-model` 53240019, `dome-bact` 53240021).
+
+**`dome-model`/`dome-bact` GaMD recovered into the boosted phase** after the earlier maintenance
+requeue data loss (see Cluster Operations) — both re-crossed the 7.5M cMD boundary.
+
+**Why full-model/full-bact equilibration looks slow, checked directly rather than assumed broken**:
+the standard ladder isn't evenly split — step6.4-6.6 have **2× the steps** of step6.1-6.3 (250,000 vs
+125,000), confirmed from the `.inp` files. Per-step timing (steps 6.1-6.3 each ~3-3.5h, step6.4
+6h55m) matches this exactly — not a slowdown, just proportional to step count. Both jobs also share
+node `beagle3-0020` with an unrelated third job from another user; unquantified but a real
+contention factor alongside the step-count explanation.
+
 ### FtsH is only ~19% modeled (found Aug 2, rebuilt Aug 5, 2026)
 
 **The deposited 9CZ2 structure resolves only residues 31–97 of FtsH's ~644** (entire cytoplasmic
@@ -342,6 +366,21 @@ mistake for dome chains; distinguish by residue range, not name.
 
 Previous `full-bact` build (40 ns production + GaMD, FtsH 31-97) is **archived, not deleted**, at
 `full-bact/superseded_ftsh31-97/{namd,gamd}/`.
+
+**Two real equilibration bugs found and fixed Aug 8-9, both worth knowing if these are ever rebuilt
+again:**
+1. **Missing/stale `step5_assembly.str`.** `full-model` never got this file uploaded at all (only
+   `namd/` was copied from the CHARMM-GUI download, not the parent dir) — instant `FATAL ERROR`.
+   `full-bact` had one, but it was a **Jul 15 leftover from the superseded 31-97 build**, not the
+   Aug 5 rebuild — box dimensions differ by several Å (A: 308.3→306.2, C: 201.2→205.8). Fixed by
+   copying the correct file from each system's own `~/Downloads/charmm-gui-*/step5_assembly.str`.
+2. **Investigated whether the box was actually too small to contain the protein** (it looked that
+   way from percentiles alone: protein top reaches +144 Å above the membrane, water box only
+   extends to +104 Å) — **but the quantitative check (periodic-wrap the overflow atoms, measure
+   distance to the nearest real protein/lipid atom) found zero clashes within 8 Å even at the worst
+   point.** The dome's overflow wraps into open bulk water on the far side, not into itself. **No
+   rebuild was needed** — don't assume "exceeds the declared box" means broken without checking
+   what's actually on the other side of the wrap first.
 
 ---
 
@@ -440,8 +479,8 @@ contraction is real physics, not a restraint artifact:
 | v7 elastic ef1500 | v2 topology, ef 700→1500, corrected EM | pending analysis | | | |
 | v8 elastic ef3000 | v2 topology, ef 700→3000, corrected EM | pending analysis | | | |
 | v9 elastic ef700 | v2 topology, corrected EM only | pending analysis | | measures how much the EM bug mattered |
-| v10 no elastic, real SS | CHARMM-GUI method exactly (STRIDE, no springs, staged ladder) | pending | | | |
-| v11 elastic + real SS | v10 + elastic ef 700 | pending | | | |
+| v10 no elastic, real SS | CHARMM-GUI method exactly (STRIDE, no springs, staged ladder) | **+1.93** ✗✗ | −1.25 ✗ | **16.51** | ring EXPANDS (wrong sign, not just wrong magnitude) — worst shape-error of any variant |
+| v11 elastic + real SS | v10 + elastic ef 700 | +0.29 | **+1.19** ✓ | **22.45** | worst RMSD of all 11 variants; only variant to get Rg_z sign right |
 
 **v2's EM bug**: confirmed from run logs that v2 alone minimized with `coulombtype=PME`,
 `epsilon_r=1` (should be reaction-field, ε_r=15 like every other variant — a file that was never
@@ -450,11 +489,22 @@ This means every "v2 is best" conclusion above rests on a bad starting structure
 v1→v2 nor v6→v2 "more restraint helps" comparisons are clean (both cross the EM change). v9 retests
 v2's exact topology with corrected EM to measure the damage.
 
-**Open question (v10/v11, submitted Aug 5, not yet read out)**: now that secondary structure is
-supplied properly, does the elastic network still do necessary work, or was it only compensating
-for the missing force-field terms? Neither v10 nor v11 has inter-chain restraints — if the
-assembly loosens in both, that points to needing something between chains regardless of per-chain
-structure quality.
+**v10/v11 ANSWERED (read out Aug 10) — real secondary structure does NOT fix the pre-collapse
+problem.** Both start their production window already contracted (Rg_xy0 76.94/77.07 vs AA's
+79.65) — the exact same pre-equilibration-collapse failure mode that invalidated the Go family
+(v3/v4/v5). This was the actual thing being tested; the answer is that supplying real secondary
+structure alone does not prevent it. Some other factor in the CG system (most likely the CG
+membrane/lipid parameters, per the earlier `TLCL1`→`TOCL` substitution note) is driving the
+contraction regardless of how the protein is restrained.
+
+Within that caveat, v10 (no elastic) vs v11 (elastic ef700) is a genuine mixed result, not a clean
+winner: v10 has the lower RMSD (16.51 vs 22.45 — drifts less from its own start) but its ring
+**expands** in the wrong direction entirely (ΔRg_xy +1.93 vs AA's −3.40); v11 barely moves in the
+ring plane (+0.29, close to flat) and is the only variant of all 11 to get the *vertical* direction
+right (ΔRg_z +1.19, same sign as AA's +1.72), at the cost of the highest RMSD of any variant tested.
+v10's RMSD plateaus after ~8 ns; v11's keeps climbing through the full 32 ns window, unconverged.
+**Neither variant's AA-comparison should be treated as clean** given the shared pre-collapse issue —
+same caveat as the Go family.
 
 **Third comparison arm added Aug 6 — a pure-lipid (no protein) CHARMM-GUI Martini build**
 (`charmm-gui-8542787498`, `~/Downloads/`, confirmed via `system.top`: DPPE/POPG/DOPG + water/ions,
@@ -487,11 +537,27 @@ constants, they're different mechanisms, and they come from different places:
   at all. So `-DBILAYER_LIPIDHEAD_FC` is a **no-op in CHARMM-GUI's own output too**, for the exact
   lipid classes our systems use — not just a gap unique to our pipeline as earlier phrasing implied.
 
-Local trajectory copies (gitignored, ~cluster remains authoritative) at
-`trajectories/martini/{v1_elastic,v2_flatbottom,v3_go}/` and `trajectories/martini_sweep/{v4..v9}/`.
-Load with `trajectories/load_v1_v6.tcl` (`WINDOW_NS` selects 0-32/0-50/full; handles the two-topology
-split — v1/v2/v6/v9 use `dome_martini_system.gro` 177,845 atoms, v3/v4/v5 use
-`dome_go_membrane_system.gro` 185,885 atoms with 8,040 extra Go virtual sites).
+Local trajectory copies (gitignored, cluster remains authoritative) now include **all 11 variants**,
+each with its own correct per-variant topology (not shared/borrowed — see the load-script note
+below) at `trajectories/martini/{v1_elastic,v2_flatbottom,v3_go}/` and
+`trajectories/martini_sweep/{v4..v11}/`. Three tracked load scripts (`trajectories/*.tcl`, exempted
+from `.gitignore`'s blanket `trajectories/*` rule):
+- `load_v1_v6.tcl` — v1-v6, `WINDOW_NS` selects 0-32/0-50/full, handles the two-topology split
+- `load_v2_v10_v11.tcl` — the v2/v10/v11 three-way comparison
+- `load_all_martini.tcl` — all 11 at once, 0-32 ns matched window, hidden except v2/v10/v11 by default
+
+**Bug found and fixed while building these (Aug 10)**: an earlier version had v11's elastic bonds
+drawn from **v6's** topology file via `cg_bonds`. Wrong — v6 (all-coil/ef300) and v11 (real-SS/ef700)
+have completely different bonded chemistry; that would have rendered the wrong bond network, not
+just failed. Every variant now draws `cg_bonds` from its own `.top`, verified headless before commit.
+Separately, v7/v8/v9's local `.xtc` files were found truncated (leftovers from an earlier failed
+parallel-scp attempt) and re-downloaded/verified byte-identical to the cluster copies.
+
+**Gotcha: VMD's RMSD Visualizer Tool (GUI) doesn't work on Martini systems.** It ANDs whatever
+selection you type with a hardcoded all-atom backbone filter (`name C CA N O`), which matches zero
+Martini beads (`BB`/`SC1`/...) — every selection fails identically, including `protein` and `all`.
+Either find and disable its "Backbone" toggle, or skip the GUI and use `measure rmsd` directly in
+the Tk Console (no fit/superposition by default — matches how the RMSD numbers above were computed).
 
 ---
 
@@ -519,6 +585,24 @@ Chen's build is still useful for **conventional** (non-GaMD) resident-mode MD, w
 `share_gamd_resident/` (repo root) has a verified-working reference config for that use case.
 Requires `fullElectFrequency 1` (not 2), `wrapWater on`/`wrapAll on` (NAMD's default is off),
 `pairlistdist 16.0` — invoke Chen's binary by full path, never bare `namd3`.
+
+**Real data loss found Aug 8 — Slurm silently requeues preempted jobs under the same ID, and the
+raw single-shot GaMD `.inp` scripts have no resume logic.** The Aug 6 maintenance window preempted
+`control`'s and `dome-bact`'s GaMD segment-2 jobs; Slurm's default `Requeue=1` restarted them under
+the *same job ID*, and since `gamd-equilN.inp` has a fixed `firsttimestep` pointing at the segment's
+original start (not a self-updating checkpoint), NAMD re-ran the entire segment from scratch,
+**overwriting** the DCD in place. Confirmed via the DCD header, not just logs (`NSET`/`ISTART` fields
+showed only the post-restart frames existed on disk): **`control` lost ~12.76 ns, `dome-bact` lost
+~5.54 ns** of already-completed segment-2 progress. Not corrupted physics — a valid restart from a
+valid checkpoint — just wasted wall-clock.
+
+**Fix applied to all NAMD/GaMD submit scripts (`--no-requeue` in every sbatch, plus
+`scontrol update JobId=X Requeue=0` on anything already running)** — a future preemption now kills
+the job cleanly instead of silently overwriting progress, surfacing it as an obviously-dead job for
+the normal `make_gamd_restart.py` workflow instead. `run_prod_gpu.sh`-driven NAMD production was
+*not* affected — it self-heals by finding the latest completed 1 ns block on restart (confirmed:
+`control-prod`'s `step7_105`→`106` sequence was continuous straight through the same maintenance
+window) — but the fix was applied there too for a cleaner failure mode regardless.
 
 ### `make_gamd_restart.py` — run after any GaMD job stops
 
@@ -566,7 +650,16 @@ rules that have each been gotten wrong here before:
   transfer); `sed` has no `\b` word-boundary (verify a `sed` actually changed the file before
   trusting it — one silently no-op'd and the unfixed file got submitted anyway).
 - **Concurrent transfers to one host share the multiplexed SSH connection** and throttle each
-  other — transfer sequentially.
+  other — transfer sequentially. **A parallel attempt that gets killed/timed out leaves silently
+  truncated files, not missing ones** — v7/v8/v9's local `.xtc` copies sat truncated (1-13 MB
+  instead of ~24 MB) for days after a failed parallel download, undetected until a later `mol
+  addfile` returned the wrong frame count. Always verify byte size against the remote after any
+  transfer that got interrupted, not just check the file exists.
+- **Foreground `scp`/`ssh` can be much slower than expected for no obvious reason** (seen repeatedly
+  this project: same file, same connection, 10x+ speed variance session to session). Don't assume a
+  slow transfer is broken — measure the live rate (`stat` the local file twice a few seconds apart)
+  before concluding something's wrong, and prefer background/`run_in_background` for anything that
+  might exceed the foreground tool timeout rather than let it die mid-transfer.
 - **Production jobs going idle (not crashing) is the recurring failure mode.** Jobs exit 0 cleanly
   at their chunk/wall-time cap and nothing auto-resubmits. Check `squeue` every session against
   the Current Systems table.
@@ -582,14 +675,16 @@ snapshot, not live-synced.
 ```
 trajectories/
 ├── README.md                  ← VMD load commands, selection strings, gotchas — READ FIRST
-├── load_v1_v6.tcl             ← loads all Martini variants, handles the two-topology split
+├── load_v1_v6.tcl             ← v1-v6, WINDOW_NS selects 0-32/0-50/full
+├── load_v2_v10_v11.tcl        ← v2/v10/v11 three-way comparison, correct per-variant cg_bonds
+├── load_all_martini.tcl       ← all 11 variants, 0-32 ns matched, hidden except v2/v10/v11 by default
 ├── namd/                      all-atom (CHARMM36m)
-│   ├── dome-bact/   step7_1-80 (80 ns) + step6.1-6.6 equilibration
+│   ├── dome-bact/   step7_1-93 (93 ns, caught up Aug 10) + step6.1-6.6 equilibration
 │   ├── full-bact/   eq + 20 ns   (cluster ahead — check squeue)
 │   └── full-model/  37 ns, production only (superseded build — full-model was rebuilt Aug 5,
 │                    this local copy predates the rebuild)
 ├── martini/                   v1_elastic, v2_flatbottom, v3_go (full-length trajectories)
-├── martini_sweep/             v4-v9 (50 ns each), v10/v11 pending download
+├── martini_sweep/             v4-v11, all complete with own topology (0-32 ns for v6-v11)
 ├── namd/stride_by_segment.tcl ← run this before New Cartoon on any all-atom system: VMD's
 │                                 built-in STRIDE fails silently above 99,999 protein atoms
 │                                 (writes malformed temp PDB), leaving everything coil. All-atom
@@ -614,8 +709,14 @@ a 1.77M-atom system) — check `sysctl -n hw.memsize` vs frame count × atom cou
 
 ## Analysis Scripts
 Rajiv's full analysis scripts: `/project2/haddadian/rajiv/analysis` (requires `pi-haddadian` group,
-already set up). Known issue: wrapping artifacts break center-of-mass calcs — unwrap the
-trajectory first.
+already set up; access it via `ssh beagle3` directly first — it sometimes works despite the
+`/project2` unreliability warning above, fall back to `ssh midway2` only if it doesn't). Known issue:
+wrapping artifacts break center-of-mass calcs — unwrap the trajectory first. ~480 files in there,
+mostly one-off/dated outputs — grep by purpose rather than browse. Local copy of the one pulled so
+far: `scripts/analysis/rajiv_lipid_density.py` (2D XY histogram of one lipid species' phosphate
+positions, `plt.imshow` heatmap, colorbar = "average lipid count per bin" — hardcoded to one system,
+edit the `psf_file`/`dcd_file`/`lipid_sel` constants at the top before reuse). Not the same as
+`thickness-map.py` (same directory) — that one maps bilayer thickness, not lipid count.
 
 `control` system analysis (thickness/curvature/order-parameter/area-per-lipid) lives in
 `analysis/control/<Nns>/<script>/`. The Voronoi APL script (code on Midway3 only, repo tracks just
