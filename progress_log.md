@@ -7,6 +7,897 @@
 
 ---
 
+## September 22-23, 2026 — dome-opening-distance script built (ring topology corrected), segid
+## naming discrepancy found between dome/full builds, idle-job sweep, new control-bact system set up
+
+### Segid naming is NOT consistent between `dome-model`/`dome-bact` and `full-model`/`full-bact`
+
+Direct PSF inspection found `PROA`-`PROX` means a *different physical chain* depending on the
+build family: in `dome-model`/`dome-bact` it's a clean 24-segment alternating HflK(79-419)/
+HflC(1-329) scheme; in `full-model`/`full-bact`, 12 of those same letters
+(`PROA,B,D,E,G,H,K,M,N,P,Q,R`) are actually **FtsH** (resid 1-120), and the real dome chains are
+split across `PRAA`-`PRAK` + the remaining `PRO*` letters. This directly contradicted CLAUDE.md's
+old FtsH segname table (claimed FtsH = `PRAA`-`PRAJ` + `PROY` + `PROZ` — wrong; `PROY`/`PROZ` are
+actually dome HflC, resid 1-329). Corrected in CLAUDE.md in place. `dome-bact` confirmed identical
+scheme to `dome-model`; `full-bact` identical to `full-model` — only 2 distinct schemes exist, not 4.
+See memory `segid-scheme-differs-dome-vs-full`.
+
+### Dome-opening-distance script (`scripts/analysis/opening_distance.py`) — Dr. Haddadian's request,
+### generalized per user ask to track ALL adjacent chains since the opening can move/close/reopen
+
+First attempt (single frame, `resid 269:348` COM) found the alphabetical-adjacency hypothesis
+"disproven" 24/24 — this turned out to be a methodology artifact, not a real finding. Root cause:
+`resid 269:348` was never a membrane-embedded region to begin with (that figure was for RMSD
+superposition quality in the structure-prep work, unrelated to membrane position) and doesn't even
+apply to HflC (max resid 329). Empirically re-derived the true membrane-embedded COM region by
+checking which CA atoms actually fall within lipid-headgroup z-bounds: HflK resid 79-137, HflC
+resid 1-64 (consistent across multiple chains checked). Using the correct region + **median**
+distance across the whole trajectory (not one frame) to derive ring adjacency, the algorithm cleanly
+recovered a single 24-chain cycle, matching alphabetical order almost exactly (`dome-model`) — the
+only deviation is chains V/W/X, which CLAUDE.md already documents as flexible/near-the-opening. So
+the original alphabetical-order intuition was right; the first check was just measuring the wrong
+thing. Also found the naive "global max across all 276 pairs" metric is wrong for "opening size" —
+it's dominated by ring diameter (~220-230 Å, opposite-side chains), not the local gap. Fixed design:
+derive the true 24 ring-adjacency edges via median-COM-distance nearest-neighbor-cycle detection
+(validated as a clean single cycle on both `dome-model` and `full-model`, i.e. works regardless of
+which segid scheme), then track each edge's distance over time; per-frame "opening" = whichever ring
+edge is stretched furthest past its own median baseline.
+
+Ran on all 4 protein-bearing systems (locally, using the existing 1ns/frame decimated trajectories
+already pulled for VMD — no cluster run needed). Results: `dome-model` opening moves around
+(dominant edge `PROW-PROX` only 19% of frames), `dome-bact` is much more persistent at one location
+(`PROV-PROX`, 39% of frames, larger max opening 57.9 Å vs 38.5 Å) — consistent with composition #2
+producing a wider, more stable single opening. `full-model`/`full-bact` both center on `PRAI-PRAK`
+(not yet cross-checked against dome-model's V/W/X in physical terms, since it's a different segid
+family). Outputs in `analysis/2026-09-22/opening_distance/` (`plots/` subdir for the 8 PNGs, raw
+`.npy`/`.txt` data alongside). Known follow-up: the per-frame "opening" reduction is a strict
+argmax across 24 edges, which produces sawtooth switching when two edges' stretch values are close
+(visible in the timeseries plots) — a smoothing/rolling-window fix was proposed but not yet applied.
+
+### Idle-job sweep (Sep 22) — Beagle3 login node down (`Connection refused`), routed via Midway3
+
+Confirmed Beagle3's compute/GPU nodes and scheduler are fine (jobs actively `RUNNING` on
+`beagle3-00XX` via `squeue` from Midway3) — only the Beagle3 login node's own SSH is unreachable.
+Found idle (nothing running despite being below target):
+- `control`'s main GaMD production (`gamd-prod11` finished ~1.5 days earlier, nothing queued behind
+  it) — built `gamd-prod12` following the exact established per-segment pattern, verified via `diff`
+  that only `outputName`/`inputname`/`accelMDGRestartFile`/`firsttimestep` changed. Submitted (job
+  59417164). Minor cosmetic bug introduced: the `#SBATCH --job-name` line still reads
+  `...-prod11-resident` (sed pattern `gamd-prod11`->`gamd-prod12` didn't match the job-name's
+  `control-prod11` substring) — harmless, the actual invoked `.inp`/`.log` files are correctly
+  `prod12`, just a misleading label in `squeue` output.
+- `full-model` (109.5/250 ns) and `full-bact` (119/250 ns) — both well below the 250 ns cap with no
+  running job. Resubmitted via their existing `job-submit-beagle3-prod.sbatch` (jobs 59417172,
+  59417174).
+`control` and `dome-bact` plain-NAMD production had both legitimately hit the 250 ns `TARGET_NS`
+cap and stopped as designed — not idle-by-failure, no action taken.
+
+Live GaMD progress captured same day (all past equilibration, all now in real production):
+`control` 245.04 ns total (45 equil + 200.04 prod), `dome-model` 120.27 ns (45+75.27), `dome-bact`
+101.75 ns (45+56.75), `full-model` 62.24 ns (45+17.24), `full-bact` 61.99 ns (45+16.99).
+
+### New system: `control-bact` — membrane-only baseline for composition #2 (Sep 22-23)
+
+CHARMM-GUI job `8966184860` (local: `~/Downloads/charmm-gui-8966184860/`), no protein, box 304.6 x
+304.6 x 75 Å. Fills a real gap: `control` is composition #1 only, so there was no protein-free
+baseline for composition #2 (`dome-bact`/`full-bact`'s lipid environment). Composition as-built
+(verified from `step5_assembly.pdb` residue counts): POPG 37.0% / DOPG 37.0% / DPPE 6.0% / LOAC
+10.0% / TYCL1 10.0% — matches composition #2's ratios exactly, **but the second cardiolipin species
+is `TYCL1` (tetra-hexadecenoyl, C16:1), not `TLCL1`** (tetralinoleoyl, C18:2) used in
+`dome-bact`/`full-bact` — confirmed via the topology `RESI` definitions in `toppar_all36_lipid_cardiolipin.str`.
+Flagged to the user, not changed — this is the structure as submitted/built, not (yet) confirmed
+intentional.
+
+Setup followed `full-model`'s established pattern (minimization already baked into `step5_input.inp`
+via CHARMM, `step6.1`'s `minimize 10000` is the only "minimization step," no separate script needed).
+Two real upload bugs hit and fixed:
+1. **Missing top-level `step5_assembly.str`** — `step6.1` does
+   `exec tr ... < ../step5_assembly.str > step5_input.str` at runtime, so that file must sit as a
+   sibling to `namd/`, not inside it. Same bug class already documented for `full-model`'s first
+   equilibration attempt. Fixed by uploading it to `control-bact/step5_assembly.str` (not
+   `control-bact/namd/`).
+2. **Missing `restraints/` directory + `step5_input.colvar.str`** (483 MB, 10 files: `dihe.txt` +
+   9 per-lipid-species `.ref` headgroup position files) — first equilibration submission (job
+   59419790) failed in 1 second: `couldn't write file "restraints/step6.1_equilibration.col"`. This
+   directory wasn't in the original upload plan at all (genuine oversight, not a CHARMM-GUI
+   omission — confirmed present in the local download). Uploaded (verified byte-for-byte against
+   local originals), resubmitted as job 59421265.
+
+Also fixed proactively (not blocking, but worth doing right): `namd/toppar/toppar_all36_lipid_cardiolipin.str`
+shipped empty (0 bytes) in this download — investigated and found this is a **systemic CHARMM-GUI
+packaging quirk, not specific to this download**: `dome-bact`'s cluster copy of the same file is
+also 0 bytes (confirmed, dated back to the original Jul 15 transfer). Root cause: this particular
+`.str` file contains ONLY topology (`RESI`) definitions, no `BONDS`/`ANGLES`/`NONBONDED` sections —
+NAMD dynamics never needs anything from it (cardiolipin's actual force-field parameters are all
+generic CHARMM36 lipid atom types already in `par_all36_lipid.prm`), so the empty file has caused
+zero physics impact on `dome-bact`/`full-bact`'s already-running simulations. Replaced with the real
+17,825-line copy from the top-level `toppar/` anyway for `control-bact`, for correctness/cleanliness.
+
+Patched `CUDASOAintegrate` into all 7 `.inp` files (missing by default, standard gotcha) — off for
+`step6.1`-`step6.6`, on for `step7_production`, matching every other system's convention.
+
+**Status as of this entry: UNCONFIRMED.** Job 59421265 was resubmitted after fixing the restraints/
+upload, but the Midway3 SSH ControlMaster socket dropped (`Too many authentication failures`,
+likely from the user's device restarting) before the resubmission's outcome could be verified.
+**Next session: re-open the `ssh midway3` socket and check job 59421265's actual status first** —
+do not assume it's running cleanly just because the resubmit command itself succeeded, given this
+system has already failed once from an incomplete upload. `run_prod_gpu.sh`/`job-submit-beagle3-prod.sbatch`
+for the production phase (once equilibration completes) have not been set up yet — that's the next
+step once equilibration is confirmed healthy. GaMD setup for `control-bact` also not started.
+
+---
+
+## September 20, 2026 (continued) — queue sweep: new safety check caught a real conflict cleanly,
+## all 3 GaMD experiments found broken since setup (missing/stale checkpoint files, never run
+## correctly), dome-model/dome-bact/control GaMD production segments advanced
+
+### The new self-heal safety check worked exactly as intended on its first real test
+
+Resubmitting `dome-bact-prod` after the corruption-recovery + cap change (previous entry) failed
+instantly with `FATAL: self-heal would rename step7_249.* to step7_248.*, but step7_248.restart.coor
+exists -- refusing to overwrite.` This is the explicit guard added earlier today doing its job: the
+job cancelled mid-chunk for the `TARGET_NS` fix had left behind a partial, ~24%-complete
+`step7_249.*` checkpoint, and the script correctly refused to let it clobber the good, reconstructed
+`step7_248` checkpoint rather than silently cascading like before. Archived the partial files (not
+deleted) to the same `superseded_ledger_corruption_sep20/` directory, resubmitted cleanly.
+
+### All three GaMD experiments (`fullelec2-noGaMD`, `sigma4-6`, `pmeinterp4`) had been broken since
+### the day they were built -- never actually ran until today
+
+All three failed within 1-2 seconds when they finally got a GPU slot after days queued behind the
+16-GPU cap. Two distinct, real bugs, both mine from the original setup:
+- **`sigma4-6` and `pmeinterp4`**: built by copying only the `.inp`/`.sh` files from the
+  `gamd-sigma-asym` template, never the supporting files (`step5_input.pdb/psf/str`, `toppar/`, or
+  the starting checkpoint itself) -- `couldn't read file "step5_input.str"`. These two directories
+  were incomplete from the moment they were created; nothing wrong with the physics, just missing
+  files.
+- **`fullelec2-noGaMD`**: its `step7_210.restart.*` symlinks pointed at `control/namd/`'s copy of
+  that checkpoint -- which no longer exists (`control` has since advanced past 250 ns, and only the
+  single latest restart checkpoint is ever retained, per this project's standing convention). The
+  symlink went dangling as production moved on: `Unable to open extended system file`.
+
+**Fixed by re-pointing all three at `control`'s current latest checkpoint (`step7_250`)** instead of
+the long-gone `step7_210`, and copying the missing topology/parameter files into `sigma4-6`/
+`pmeinterp4` from the working `gamd-sigma-asym` directory. All three resubmitted and re-applied
+`Nice=100000` (the "core always wins" scheduling policy from Sep 18 doesn't survive a resubmission
+and has to be reapplied each time). **None of these three have any real result yet** — today's
+was their first successful start, not a completion; still purely diagnostic/setup work until they
+actually run.
+
+### Routine: next GaMD segments built for control, dome-model, dome-bact; full-model/full-bact's
+### first production segments still running from the prior entry
+
+`gamd-control-prod10`, `gamd-dome-model-prod4`, and `gamd-dome-bact-prod3` all completed cleanly
+(chunk-cap, not crashes) since the last check; built and submitted `prod11`/`prod5`/`prod4`
+respectively via the same established sed-based pattern, each verified via `diff` against its own
+predecessor before submitting.
+
+---
+
+## September 20, 2026 — dome-bact production-ledger corruption found live and fixed (systemic bug,
+## patched fleet-wide); full-model/full-bact reach GaMD production for the first time; unified
+## TARGET_NS=250 cap applied to all 5 systems
+
+### `dome-bact-prod` actively corrupting its own checkpoint naming for ~28 hours
+
+While pulling fresh numbers for a status table, found `dome-bact`'s ledger (`cumulative_ns.txt`)
+had **10 consecutive malformed entries** (`step7_` with no number) after the last good one
+(`step7_238 238.0000`). Root cause: the Sep 18-19 recovery of `dome-bact`'s incomplete restart
+checkpoint (see the Sep 18 entry) restored `step7_239.coor/.vel/.xsc` and the `.restart.*`
+equivalents, but **not `step7_239.out`** — the log file `run_prod_gpu.sh`'s one-time startup
+self-heal reads to compute how much real time a reconciled checkpoint represents
+(`grep '^TIMING' "${latest_name}.out"`). With that file missing, the grep failed, but because the
+script lacked `set -o pipefail`, the failure was invisible (a pipeline's exit status defaults to
+its *last* command, `awk`, which "succeeds" on empty input) — so `set -e` never caught it. The
+resulting empty `actual_steps` cascaded through `bc` (silently producing empty/error output at
+each step) into `true_name="step7_"` — and because that first corrupted rename overwrote the
+restored `step7_239.*` files, every subsequent chunk in the job's internal loop inherited the same
+empty `prev_cumulative` from the ledger and repeated the exact same corruption, once per chunk, for
+the entire ~28-hour run.
+
+**Real physics were never affected** — each chunk correctly continued from the previous chunk's own
+(identically-named but content-correctly-updated) restart checkpoint; only the bookkeeping/naming
+broke. Cancelled the job immediately, then reconstructed the true state from first principles: the
+interrupted final chunk's own restart `.xsc` showed step 250,000 of its own 500,000-step target
+(confirmed via its `TIMING` log: 8.35 ns/day, matching a stable ~2.87h/1ns-chunk rate), and the
+job's total 28h15m runtime divided by that rate is consistent with **9 complete chunks + this one
+interrupted at 50%** — i.e. 9.5 ns of real progress since the `step7_238` baseline, giving a true
+current state of **248.5 ns**, not the ledger's stale 238. Verified no naming collision, renamed
+the recovered checkpoint files to `step7_248.*`, archived the corrupted intermediates (not
+deleted) to `dome-bact/namd/superseded_ledger_corruption_sep20/`, truncated and corrected the
+ledger, and resubmitted.
+
+### Systemic fix, deployed to all 5 systems
+
+This was a latent bug in the shared `run_prod_gpu.sh` script itself, not something specific to
+`dome-bact` — any future missing/broken `.out` file on any system would trigger the identical
+cascade. Fixed by adding `set -o pipefail` (so a failed `grep` in a pipeline actually trips `set -e`
+instead of being masked by a downstream command's success) and explicit numeric validation at both
+places `actual_steps`/`prev_cumulative` get read (self-heal block and the main per-chunk loop) —
+any non-numeric value now hits a clear `FATAL:` message and `exit 1` instead of silently cascading
+into a corrupted name. Deployed to `control`/`dome-model`/`dome-bact`/`full-model`/`full-bact`'s
+copies. **One risk taken knowingly**: `dome-model-prod` was actively running when its copy was
+overwritten — a scenario this project has been burned by before (a live helper script being edited
+out from under a running process). Verified after the fact that it kept running cleanly with no
+disruption (bash had already buffered the running script), but this should be avoided when
+avoidable rather than relied upon.
+
+### full-model/full-bact reach GaMD production for the first time
+
+Both systems' GaMD equilibration jobs (`gamd-equil3`) completed cleanly, reaching exactly the full
+22,500,000-step (45 ns) schedule for the first time this project — confirmed via `sacct` (both
+`COMPLETED`) and each system's own final restart checkpoint (`22,500,000` exactly). Built
+`gamd-prod1.inp`/`.sh` for both, using `control`'s own historical `gamd-equil3`→`gamd-prod1`
+transition (still on disk) as the exact template: only `outputName`, `set inputname`,
+`accelMDGRestartFile`, and `firsttimestep`/`run` change — every boost parameter (`sigma0`, `margin`,
+`fullElectFrequency`, `accelMDGcMDSteps`/`EquiSteps`) carries over unchanged, since crossing from
+equilibration into production is a labeling/logging distinction, not a physics one (E/k freeze
+automatically once cumulative steps pass `cMDSteps+EquiSteps`, regardless of segment name). Verified
+via `diff` against each system's own `gamd-equil3.inp` before submitting. Jobs submitted
+(59320009, 59320010).
+
+### Unified `TARGET_NS=250` cap applied to all 5 systems
+
+User's explicit instruction: cap every system at 250 ns, superseding the earlier tiered version
+(`control` 250, `dome-model`/`dome-bact` 300, `full-model`/`full-bact` uncapped). Updated all 5
+`job-submit-beagle3*.sbatch` files. **`dome-bact` needed special handling**: its live job (resubmitted
+after the corruption fix above, before this new instruction) still had the old `TARGET_NS=300`
+baked into its running environment — editing the `.sbatch` file doesn't affect an already-running
+job's env vars. Left alone, it would have run past 250 toward 300 before the *old* cap caught it.
+Cancelled (losing ~41 min of an in-flight chunk, not a full one — an acceptable tradeoff against a
+~10 ns overshoot) and resubmitted with the corrected cap.
+
+---
+
+## September 19, 2026 — lipid-cutoff-radius script's real performance bug found and fixed
+## (full-system per-frame wrap, not just "slow"); dome-model completed, dome-bact run started
+
+### `multi_system_lipid_cutoff.py` timed out twice (4h, then 8h) with zero visible progress
+
+Investigated rather than just re-running with more time. Found two compounding issues:
+
+1. **Output was buffered, hiding real progress.** Python fully buffers stdout when writing to a
+   file (not a terminal) rather than line-buffering, and a hard SLURM time-limit kill doesn't get
+   a chance to flush that buffer — so "no visible output" did NOT mean "no work happened." Checking
+   the (0-byte but *existing*, timestamped) output files directly showed the script had actually
+   made it all the way through universe loading, the prefilter pass, and candidate filtering —
+   roughly 5 hours of real work — before the process was killed with nothing ever flushed to disk.
+2. **The actual bottleneck: `trans.wrap(u.atoms, compound="residues")` reused unchanged from
+   Rajiv's original `select_lipids_cutoff.py`.** This wraps the ENTIRE system — every water
+   molecule and ion, not just the ~367k atoms (anchor + lipids) the script ever actually uses in
+   any COM/distance calculation — by molecular residue, on every single frame access, twice over
+   (once during the prefilter pass, again during the full main loop). For `dome-model`'s
+   ~1.74M-atom system this is enormously more expensive than `control_thickness.py`/
+   `control_curvature.py`, which never wrap/unwrap anything beyond small, targeted atom subsets
+   (headgroups, leaflets) — explaining why this one script was dramatically slower than the other
+   two despite doing comparable per-frame numerical work.
+
+**Fix**: narrowed the wrap transformation's target `AtomGroup` to just the anchor + the three
+lipid classes actually used (`(anchor_sel) or resname <all lipid resnames>`), instead of `u.atoms`.
+Water/ions never enter any calculation in this script, so this is a pure performance fix, not a
+behavior change. Also added `flush=True` to every progress print, per-frame flushing of the output
+files during the main loop, and `python -u` in the sbatch invocation, so any future slow run is
+actually observable instead of silent.
+
+**Result**: `dome-model`'s lipid-cutoff-radius run (same 1510 frames that hadn't even finished its
+31-frame prefilter pass after 8 hours before) **completed in 1h08m** after the fix — confirming the
+wrap scope was the dominant cost, not an inherent property of the analysis. Applied the same fix
+proactively to `dome-bact`'s run rather than waiting to hit the same wall a third time.
+
+**General lesson**: when reusing an existing script "unchanged" onto a much larger system than it
+was originally built/tested for (this repo's own stated policy for e.g. the Voronoi APL script, for
+good reason — consistency of method matters for fair comparison), the specific *scope* of any
+whole-system operations (wrapping, unwrapping, full-atom selections) still needs checking against
+the new system's actual size — "same code" is not automatically "same performance characteristics."
+
+`dome-model` (ns 33-183): thickness, curvature, and lipid-cutoff-radius (PG/PE/CL selected-resid
+lists) now all complete — see `analysis/2026-09-18/`. `dome-bact` (ns 1-210) analysis batch
+submitted (job 59307369) using the fixed script from the start.
+
+---
+
+## September 18, 2026 (continued) — dome-model plain production cut over to a fresh branch at
+## ns 183, deliberately discarding ns 184-223; multi-system lipid analysis run for control/dome-model
+
+### Background: the ns 184-215 DCD gap, and the decision to restart rather than accept it
+
+Following up on the earlier-this-day investigation (below) that found `dome-model`'s ns 184-215
+`.dcd` files genuinely missing from every accessible location (cds2, Beagle3 scratch, local repo,
+`/project2`, GPFS snapshots), user considered restarting production from the last fully-intact
+point (~ns 183) to get a complete file record going forward. Clarified first that this does **not**
+recover the missing window — MD's chaotic sensitivity means a fresh branch off the `step7_183`
+checkpoint is a statistically independent trajectory, not a continuation of the original — and that
+the live production had kept running the whole time (now past ns 223), so restarting means
+discarding that real, already-completed compute time, not just filling a hole. User's decision,
+via explicit two-part confirmation: don't chase the lost window itself, but do want a clean,
+gap-free record going forward badly enough to discard the extra ~40 ns already banked since 183,
+rather than keep both as parallel branches.
+
+### Executed
+
+1. Verified a complete, consistent checkpoint exists for the true cutover point: cds2 has
+   `step7_183.coor`/`.vel`/`.xsc` (regular, non-restart — the restart-named version no longer
+   exists since only the single latest restart chain point is ever kept, and that had long since
+   moved past 183), all same timestamp (Sep 9 13:38), matched `.coor`/`.vel` sizes.
+2. Cancelled the live job (`dome-model-prod`, 59247656; confirmed fully terminated before proceeding
+   — did not touch `dome-model`'s GaMD track, which branched off much earlier (~ns 21) and runs an
+   entirely separate, unaffected trajectory/checkpoint chain).
+3. Pulled `step7_183.coor/.vel/.xsc` from cds2 to Beagle3 scratch (server-side via Midway3).
+4. **Archived, not deleted**, the discarded ns 184-223 range (all `.out`/`.xst`/`.restart.*`/etc.,
+   163 files) to `dome-model/namd/superseded_ns184-223_gap_restart/` — preserving the option to
+   revisit this decision later.
+5. Copied `step7_183.{coor,vel,xsc}` to `step7_183.restart.{coor,vel,xsc}` so
+   `run_prod_gpu.sh`'s existing self-heal convention (`PREV="${prev_name}.restart"`) finds them
+   without any script changes.
+6. Backed up the full ledger to the same superseded directory, then truncated
+   `cumulative_ns.txt` to end at `step7_183 183.0500` (removing the 184-223 entries).
+7. Resubmitted `job-submit-beagle3-prod.sbatch` — picked up cleanly, generating `step7_184` fresh
+   from this point with no gap.
+
+**Standing lesson carried forward**: this is the second time a `.dcd`-focused archival-then-cleanup
+step has silently created a gap (first `dome-bact`'s incomplete restart checkpoint, now this) —
+reinforces the existing rule (see Sep 16-17 cluster-gotchas addition) to verify the *complete* set
+of files for a checkpoint/range before treating an archival pass as safe to clean up after.
+
+### Multi-system lipid analysis (thickness, curvature, lipid-cutoff-radius)
+
+Ran on the longest continuous early span actually available per system, given the gaps found this
+session (`control` ns 37-246 — old Midway3 chunking convention, not a real gap; `dome-model` ns
+33-183 — cds2 archive's true start, corrected from an earlier wrong check; `dome-bact` ns 1-210,
+fully available). `control` skips the lipid-cutoff-radius script entirely (no protein). Cutoff
+anchor for `dome-model`/`dome-bact` is the opening-region chains specifically (`PROV`/`PROW`/`PROX`
+— confirmed via PSF these systems use the same segid convention as Rajiv's original full-system
+script, just without the FtsH chains), not the whole 24-chain complex, matching the original
+script's design intent and this project's central question.
+
+Generalized three scripts (`multi_system_thickness.py`, `multi_system_curvature.py`,
+`multi_system_lipid_cutoff.py`, all in `scripts/analysis/`) from `control_thickness.py`/
+`control_curvature.py` (which were hardcoded to a stale ~31 ns Midway3 build — a real, separate
+bug found and fixed by generalizing rather than just patching paths) and Rajiv's
+`select_lipids_cutoff.py` (core distance/prefilter logic reused unchanged).
+
+**Execution required working around two infrastructure constraints, not just running the
+scripts**: `caslake` (Midway3) compute nodes can reach `/scratch/beagle3` but **not** `/cds2`
+(login-node-only mount) — confirmed via a direct test job before trusting it either way. Staging
+`dome-model`/`dome-bact`'s cds2-only DCDs to Midway3 scratch first hit an **already-exceeded
+Midway3 user quota** (119.9G/100G, grace expired) — invisible from the filesystem-level `df -h`
+check, only visible via `rcchelp quota`. Restaged to Beagle3 scratch instead (353.4G/400G, real
+margin) into an isolated `analysis_2026-09-18/` directory (not the live `namd/` dirs, to avoid any
+risk to ongoing production). Given combined `dome-model`+`dome-bact` staging (~76G) still doesn't
+fit the ~46G margin at once, staged/ran/cleaned up sequentially rather than simultaneously.
+
+Results so far: `control` thickness (mean 46.01 Å) and curvature (min -0.57/max 0.60 1/Å) both
+clean; `dome-model` thickness and curvature (min -0.85/max 0.68 1/Å) both clean, lipid-cutoff-radius
+in progress. `dome-bact` not yet started (pending `dome-model`'s staged copy cleanup to free quota
+margin). Local copies of completed plots pulled to `analysis/2026-09-18/`.
+
+---
+
+## September 18, 2026 — sigma0=4 claim retracted, two new PI-requested experiments planned and
+## launched (sigma0P=4.0/D=6.0, PMEInterpOrder=4), nice-based priority scheme applied, real
+## dome-bact restart-checkpoint gap (traced to the Sep 16-17 recovery) found and fixed
+
+### Retraction: "sigma0=4 vs 6 nearly identical" was never a real finding
+
+Checked `sacct` directly for job 57683980 (`control/gamd-sigma4/`, launched Sep 3-4): it **FAILED**
+after 1d3h, ending 2026-09-06T20:49:46 — right at the edge of the Sep 7 disk-quota crisis (likely
+an innocent casualty, unconfirmed — its directory/logs no longer exist on the cluster). The
+"nearly identical boost statistics" conclusion repeated across multiple sessions (including this
+one, until caught) traced back to an unverified conversation-summary carryover, not real data. Even
+the experiment script's own header comment (`gamd-sigma-asym/gamd-equil.sh`) asserted the sigma0=4
+test was "already-completed" — same false claim, baked into a third layer of documentation.
+Corrected in `CLAUDE.md`, this log, and the `gamd_haddadian_convergence_check` memory. **The
+sigma0-tuning question is genuinely open.**
+
+### Also corrected: the `gamd-sigma-asym`/`gamd-fullelec2-noGaMD` checkpoint provenance
+
+Both experiments actually branch from `step7_210.restart` (~210 ns into `control`'s plain
+production), not `step7_21.restart` as several earlier writeups claimed. Verified `gamd-sigma-asym`
+has no mid-run parameter inconsistency — the restart `.xsc`'s own step counter reads exactly
+1,310,000, matching `firsttimestep`, confirming settings were constant from step 0 of its own
+schedule throughout. Diffing both experiment files against `control`'s own real equilibration
+config surfaced two more previously-undisclosed details: both run their equilibration in
+**GPU-resident mode**, while `control`'s own real equilibration (all segments, including the most
+recent `gamd-equil3`) has stayed in **offload** mode throughout; and `gamd-fullelec2-noGaMD`
+carries an inert leftover `accelMDGsigma0P=2.0` (harmless — never used since `accelMD off`).
+Investigated whether the resident-mode corruption bug's original validation covered the
+equilibration/calibration phase specifically (as opposed to a frozen-stats production restart) —
+the original test's files are also gone from the cluster, so this is unconfirmed either way; the
+symptom pattern (an actively-updating running-minimum statistic corrupting after restart) is more
+consistent with an equilibration-phase scenario, but not proven. **Decision: proceed with
+resident-mode equilibration for all experiments anyway** (already the project's standard
+everywhere else) and diagnose reactively if a specific known resident-mode failure signature shows
+up (`Vmin`-collapse/`sigmaV`-inflation on the first post-restart stats line, or the FtsH-style
+`SequencerCUDA: Atoms moving too fast` crash) — cheaper than blocking on a dedicated smoke test.
+
+### Two new PI-requested experiments planned and launched
+
+Dr. Haddadian requested two independent tests: **sigma0P=4.0/D=6.0** (full-length, fresh
+equilibration → ~20-30 ns production) and **PMEInterpOrder=4** (down from this project's baseline
+of 6 — confirmed via the actual config, not NAMD's usual default of 4 — also full equilibration→
+production scope). Planning surfaced a real resource constraint: core production+GaMD across 5
+systems wants **10 job-slots**, but the account's `gpu` QOS caps at **16 GPU/8 slots** — core
+production is structurally oversubscribed even before any experiment. Resolved via user decision:
+core production always wins; experiments run opportunistically via `scontrol update ... Nice=100000`
+on all 4 experiment jobs (both existing + both new) so the scheduler always prefers a waiting core
+job over a waiting experiment for any freed slot. Both existing sigma-related tests (P=2.0/D=6.0
+asymmetric, and the PI's new P=4.0/D=6.0) kept running in parallel rather than choosing one, given
+low sunk cost and complementary value (2.0 vs 4.0 vs 6.0-baseline three-point comparison once all
+finish).
+
+Built `control/gamd-sigma4-6/` and `control/gamd-pmeinterp4/` from the `gamd-sigma-asym` template
+(same `step7_210.restart` starting point, for a clean apples-to-apples comparison across all sigma0
+variants), verified via direct `diff` that each changed ONLY its intended parameter(s) before
+submitting (sigma4-6: only `accelMDGsigma0P` 2.0→4.0; pmeinterp4: `PMEInterpOrder` 6→4 AND
+`accelMDGsigma0P` reverted 2.0→6.0-baseline, since only PMEInterpOrder should vary). Submitted as
+jobs 59271939/59271940.
+
+### Real bug found: `dome-bact-prod`'s restart checkpoint was incomplete, traced to the Sep 16-17 recovery
+
+While checking why several jobs had gone idle, found `dome-bact-prod` (job 59247783) had actually
+**FAILED in 2 seconds** — `FATAL ERROR: Unable to open extended system file... step7_238.restart.xsc`.
+Root cause: `step7_238` had no restart files at all, and `step7_239.restart.xsc` existed but its
+`.coor`/`.vel` companions were missing — a direct consequence of the Sep 16-17 `rm -rf` recovery,
+whose final broad safety-net `rsync` deliberately **excluded** `step7_*.coor`/`.vel` (to avoid
+re-pulling large files, under the wrong assumption the true latest restart was already intact).
+`run_prod_gpu.sh`'s self-heal logic (`ls -t step7_*.restart.coor | grep -E '^step7_[0-9]+\.restart\.coor$'`)
+correctly ignored an unrelated malformed `step7_.restart.*` (empty chunk number, a leftover from a
+separate earlier Sep 17 failed attempt, also cleaned up) but had no complete checkpoint to fall
+back on, so the job used the stale ledger entry (238) with no matching restart files.
+
+**Fixed**: pulled the genuine, complete `step7_239.restart.coor/.vel/.xsc` directly from the cds2
+backup (`/cds2/haddadian/kenneth/dome-bact/namd/`, confirmed via Midway3 — which can see both
+`/cds2` and `/scratch/beagle3` — server-side, no laptop round-trip). Resubmitted (job 59272082);
+`run_prod_gpu.sh`'s self-heal should now correctly reconcile the ledger against the real 239
+checkpoint on its own.
+
+### `control`'s main GaMD production (`gamd-prod9`) completed cleanly, next segment built
+
+Unrelated to the above — `gamd-control-prod9-resident` (job 59247670) `COMPLETED` normally after
+23h12m (chunk-cap, not a crash). Built `gamd-prod10` (firsttimestep 102,500,000, `run 10000000` —
+same ~20 ns chunk pattern), verified diff against `gamd-prod9.inp` showed only the 4 expected
+changed lines, caught and fixed two copy-paste artifacts before submitting (job name in the `.sh`
+didn't match the `s/gamd-prod9/gamd-prod10/` pattern since it's `gamd-control-prod9-resident`, not
+`gamd-prod9`; a stale "segment 9" comment). Submitted as job 59272158.
+
+---
+
+## September 16-17, 2026 — Ghanbarpour structure reoriented, queue-empty resubmission across all 5
+## systems, GaMD isolation tests advanced, TARGET_NS caps added, Martini v12-v16 table corrected,
+## Dr. Haddadian's 3-part GaMD convergence check completed (all 3 systems fail 10kT — two real
+## log-artifact bugs found and fixed along the way), Beagle3/Midway3 confirmed to share one queue
+
+### Beagle3 disk-quota cleanup continued, redirected to cds2; one real `rm -rf` mistake, recovered
+
+Continued the Sep 7 disk-quota cleanup begun in the previous session, now with
+`/cds2/haddadian/kenneth` (Midway3-mounted, 1.7T free) as the archive target instead of Box, once
+GPFS was confirmed to mount `/scratch/beagle3` directly on Midway3 — archive copies can be done
+server-side, no laptop round-trip needed. Archived `dome-bact` and `dome-model`'s bulk NAMD
+trajectory data (`.dcd` + regular non-restart `.coor`/`.vel` chunks) to cds2, freeing scratch space.
+
+**Real mistake**: after copying `dome-bact/namd` to cds2 and verifying file counts, ran
+`rm -rf /scratch/beagle3/junseo/dome-bact/namd` — deleting the restart checkpoint,
+`cumulative_ns.txt`, topology, `toppar/`, and sbatch scripts along with the DCDs, not just the bulk
+trajectory data intended for archival. Caught before the next job submission; recovered via a full
+`rsync --exclude='*.dcd' --exclude='step7_*.coor' --exclude='step7_*.vel'` restore from the cds2
+backup (907 files, ~2.8GB), after two earlier partial-restore attempts each surfaced a different
+missing file (`run_prod_gpu.sh`, then `step7_239.out`/`step7_production.inp`). **New standing
+rule**: only ever delete `*.dcd` files via targeted `find ... -delete`, never `rm -rf` a whole
+`namd/`/`gamd/` directory, even right after a verified backup — the backup verification checked
+file *counts*, not that every non-DCD file was excluded from the original archive step. Also hit
+`cp` failing with "Disk quota exceeded" mid-recovery (real usage 411G over the 400G soft quota with
+expired grace, while the cached `quota -s` report was stale) — freed more space first
+(`dome-bact/gamd`'s DCDs, another 53.7G), then preferred `mv` (pure rename, no new block
+allocation) over `cp` for same-filesystem checkpoint restores under quota pressure going forward.
+
+### Ghanbarpour closed1 reference structure: orientation bug found and fixed; FtsH off-center confirmed not a bug
+
+User's VMD visual inspection of `reference_structures/ghanbarpour_closed1_complete.pdb` (built in
+an earlier session for CHARMM-GUI input) found it tilted diagonally and not centered at the origin.
+Root cause: the build script (`scripts/build_ghanbarpour_closed1_complete.py`) only ever did LOCAL
+per-chain grafting fits, never touched the global frame — the output inherited Ghanbarpour's raw
+deposited orientation as-is. Fixed by adding a final global re-orientation step: one Kabsch fit of
+all originally-resolved (non-grafted) dome CA atoms against `dome-model`'s own already-correctly-
+oriented `step5_input.pdb`, applied as a single rigid transform to the whole structure. Fit RMSD
+9.12 Å over 6,875 CAs — matches the independently-established dome-model-vs-closed1 RMSD range
+(7.9-9.1 Å), a good consistency check. Verified visually post-fix: clean top-down circular ring
+view down Z.
+
+Second reported issue — FtsH sitting off-center/asymmetric within the dome ring, poking past the
+dome's silhouette from some angles — investigated and confirmed **not a bug**: FtsH's core resolved
+region (31-92) is copied unmodified from Ghanbarpour's own raw structure; grafts only extend the
+N/C termini via local fits anchored to that fixed core; the global reorientation is one rigid
+transform preserving all relative positions. So FtsH's position is exactly what the cryo-EM
+structure has — consistent with the paper's own "asymmetric nautilus" description. User's call:
+leave as-is, don't reposition (would be a deviation from the source structure, not a correction).
+
+### Queue found empty, all 5 systems + GaMD resubmitted, bugs found and fixed along the way
+
+Found the queue completely empty at session start and resubmitted plain-NAMD production and GaMD
+for all 5 systems. Along the way:
+- **Tcl "too many args" fatal error** on `full-model`/`full-bact`'s GaMD equil3 configs — a `sed`
+  substitution had inserted a `run N` value directly followed by `# comment` with no semicolon
+  terminator, so NAMD's Tcl parser read the comment text as extra arguments to `run`. Fixed by
+  adding semicolons; caught the identical bug pattern proactively before it shipped again later
+  this session when building the `fullElectFrequency=2`-noGaMD isolation test (below).
+- **Missing files** blocking `dome-bact-prod` after the `rm -rf` mistake above (`run_prod_gpu.sh`,
+  then separately `step7_239.out`/`step7_production.inp`) — root cause and fix already covered
+  above.
+
+### GaMD isolation tests advanced: asymmetric-sigma0 continuation, new fullElectFrequency=2-without-GaMD test
+
+**Resumed `control/gamd-sigma-asym`** (verified exact config Sep 18: `accelMDGsigma0P=2.0` — total-
+potential boost target lowered — with `accelMDGsigma0D=6.0` left at baseline; NOT a uniform
+sigma0=2.0 as an earlier pass of this writeup imprecisely said. More surgical than lowering both,
+since the total-potential boost dominates the combined ΔV; branches from `step7_210.restart`, NOT
+`step7_21.restart` as earlier written here — also corrected). Started fresh from step 0 of its own
+dedicated 22.5M-step equilibration schedule with these settings applied throughout (verified: the
+restart `.xsc`'s own step counter reads exactly 1,310,000, matching `firsttimestep` below — no
+parameter changed mid-run), and had been killed mid-run by the Sep 7 disk-quota crisis. Built a
+continuation config (`gamd-equil-cont.inp`, `firsttimestep 1310000`, `run 21190000` to complete the
+original 22,500,000-step target) and submitted (job 59247853; as of Sep 17 this is queued, not yet
+running — see the GPU-cap finding below).
+
+**Correction (Sep 18) — the "sigma0=4 vs 6 gave nearly identical boost statistics" claim used
+above and elsewhere in this entry was WRONG, retracted.** Checked `sacct` directly: the actual
+sigma0=4.0 test (job 57683980, `control/gamd-sigma4/`, launched Sep 3-4) **FAILED**, not completed
+— ran 1 day 3 hours then died, ending 2026-09-06T20:49:46, right at the edge of the Sep 7
+disk-quota-crisis window (most likely an innocent casualty of that crisis, not a sigma0=4-specific
+physics problem — but unconfirmable, its directory/logs no longer exist on the cluster). This claim
+traced back to the pre-compaction conversation summary, not to any actually-verified job output, and
+had been repeated across multiple turns before being caught. **The sigma0-tuning question is
+genuinely open, not settled** — see the new sigma0P=4.0/D=6.0 full-length experiment planned below.
+
+**New**: reconsidered whether `fullElectFrequency=2` (PME multi-timestepping) is really non-viable
+for GaMD, per the user's "I want this to work" push-back on the earlier rejection. Built a new
+isolation test (`control/gamd-fullelec2-noGaMD`) — same `step7_210.restart` checkpoint as prior
+`fullElectFrequency=2` attempts, `fullElectFrequency 2`, `margin 5` (matching baseline), but
+**`accelMD off`** — plain conventional MD, GaMD completely disabled — to determine whether GaMD
+itself (not multi-timestepping generally) is the source of the earlier-found instability. Submitted
+(job 59247926; also queued as of Sep 17, not yet run).
+
+### Per-system production caps (`TARGET_NS`) added for 3 of 5 systems
+
+Per user's explicit request (limited compute allocation on the account): activated
+`run_prod_gpu.sh`'s pre-existing but previously-unset `TARGET_NS` safety-stop by adding
+`export TARGET_NS="250"` (`control`), `"300"` (`dome-model`, `dome-bact`) to each system's
+`job-submit-beagle3*.sbatch`, right after the existing `DEVICES` export. **`full-model`/`full-bact`
+deliberately left uncapped** — user's call: "we don't have enough production for the full systems
+to set a cap." Verified no overshoot risk given the existing per-job `MAX_CHUNKS=12` cap before
+editing.
+
+### Martini v1-v16 table corrected: v12/v13 are real (not missing), v12 currently best, pivot to v14-16 explained
+
+Built a comprehensive summary table of all tested Martini variants on user request. Initial pass
+wrongly concluded v12/v13 weren't real analyzed variants (git history/`progress_log.md` searches
+only ever mention "11 restraint-scheme variants") — **corrected** after finding real local data
+(`trajectories/martini_sweep/v12/`) and a pre-existing, detailed `load_v12.tcl`: **v12** (elastic
+`ef1000`, real secondary structure) ran cleanly to **2382 ns**, the longest clean run of the whole
+sweep; **v13** (elastic `ef1500`) crashed via a LINCS constraint failure at ~2107 ns. Neither is
+mentioned anywhere in CLAUDE.md's existing sweep table (fixed this session) or elsewhere in this
+log — a real documentation gap, not a fabrication on the earlier session's part, just never written
+down.
+
+**v12 is the best variant so far** by the project's own metrics (closest ΔRg_z sign-and-magnitude
+match to the AA reference among all elastic-network variants, longest stable run). The subsequent
+pivot to v14/v15/v16 was to test **timestep sensitivity**, a different axis than v12/v13's
+stiffness-tuning — not a sign v12 was rejected; v14-16 are a separate, complementary investigation,
+not a "trying to do better than v12" chain.
+
+**Attempted to reconstruct missing ΔRg_xy/ΔRg_z/RMSD metrics for v7/v8/v9** (the original script
+that produced these numbers for other variants no longer exists in the repo) via a new decomposition
+script, validated against v10/v11's already-documented values — **validation failed** (wrong signs,
+wrong magnitudes). Reported honestly as an unresolved gap rather than presenting untrustworthy
+numbers; v7/v8/v9 remain metric-incomplete in the table.
+
+Gave a 4-way visual VMD comparison script (`trajectories/load_v2_v10_v11_v12_full.tcl`, new,
+tracked) for v2/v10/v11/v12's full available trajectories (different native ns/frame per variant,
+not frame-synced), plus concrete evidence-grounded suggestions for improving Martini stability/
+realism (all inspected variants show collapse) — suggestions given, not yet acted on.
+
+### Dr. Haddadian's 3-part GaMD convergence check — completed for the 3 systems with finished equilibration
+
+Request (forwarded verbatim by user, from Dr. Haddadian's email), with user's own added requirement
+to concatenate equilibration + production per system: (1) plot ΔV vs. time — should be stable, no
+drift; (2) plot the distribution of ΔV — should approximate a Gaussian; (3) check σΔV against the
+field's reliability threshold for cumulant-expansion reweighting.
+
+**Method**: for each of `control`, `dome-model`, `dome-bact` (the 3 systems with completed GaMD
+equilibration as of this session — `full-model`/`full-bact` are still mid-equilibration, no
+production GaMD data exists for them yet), extracted boost statistics via
+`scripts/analysis/gamd_convergence_extract.sh` (Juliana Steier's original TCR-project log-parser,
+generalized), then concatenated only the **final/frozen equilibration regime** (not all of
+equilibration — `E`, the boost threshold, is recomputed periodically as `accelMDGStatWindow`
+advances, confirmed 4 distinct `E` values per system during equilibration; pooling all regimes mixes
+statistics and produces a meaningless bimodal distribution, same bug class found and fixed the day
+before) with all production data.
+
+**Two real log-parsing artifacts found and fixed, both a NAMD job-restart logging quirk, not a
+simulation bug**:
+1. **Equilibration-regime-boundary artifact**: the very first log line of the final regime reports
+   an anomalous near-zero ΔV (`control`: 0.535 kcal/mol vs. the regime's real ~3750 mean) — the
+   boost hasn't re-engaged yet at the exact step the new threshold takes effect. Fixed: exclude the
+   sample exactly at the boundary step (`step > final_start_step`, not `>=`).
+2. **Production-segment-restart duplicate-step artifact**: found while investigating why `control`'s
+   distribution plot looked stretched/off-center. `step 56920000` was logged TWICE with disagreeing
+   values (3733.29 then 2540.54 kcal/mol — impossible for the literal same trajectory frame).
+   Checked all 3 systems: 5-14 duplicate-step pairs each, nearly all agreeing to <1 kcal/mol
+   (harmless double-logged lines from restart overlap) except this one, off by ~1200 kcal/mol.
+   General fix added to `gamd_convergence_full.R`: for any duplicate step, keep whichever value is
+   closer to its immediate distinct-step neighbors, drop the rest (10/5/6 samples dropped for
+   control/dome-model/dome-bact respectively). Dropped `control`'s sd_dV from 73.68→66.63 kcal/mol
+   and anharmonicity γ from 0.043→0.0192 — the earlier apparent "control is much less Gaussian than
+   the dome systems" gap was mostly this artifact, not a real difference.
+
+**Results (10kT threshold = 6.0242 kcal/mol at 303.15K)**:
+
+| system | span | Check 1 (drift) | Check 2 (Gaussian shape) | σΔV | anharmonicity γ | Check 3 (σΔV≤10kT) |
+|---|---|---|---|---|---|---|
+| control | 165.4 ns | PASS | PASS | 66.63 | 0.0192 | **FAIL, ~11×** |
+| dome-model | 48.7 ns | PASS | PASS | 26.39 | 0.0083 | **FAIL, ~4.4×** |
+| dome-bact | 35.1 ns | PASS | PASS | 27.40 | 0.0096 | **FAIL, ~4.6×** |
+
+All 3 systems: stable boost (no drift), close-to-Gaussian shape (low anharmonicity), but boost
+*magnitude* too large for the standard 2nd-order cumulant-expansion reweighting to be automatically
+trusted. **Simulations themselves are fine** — this is a reweighting-reliability caveat, not a
+simulation defect, and doesn't block continued production.
+
+**Verified the 10kT criterion against primary sources** (NAMD 3.0 User's Guide node63,
+Miao/Feher/McCammon 2015 *JCTC*, the Miao Lab's `PyReweighting` tool) rather than trust it from
+memory — confirmed it's presented as an "e.g." example value for the user-specified `σ₀` parameter,
+not an absolute physical law. **Notable connection found**: `σ₀` in that formula is literally the
+same parameter as this project's own `accelMDGsigma0P`/`D` (both set to 6.0 kcal/mol in every GaMD
+config) — 10kT at 303.15K = 6.0242 kcal/mol, i.e. this project's calibration target was already
+deliberately chosen to approximate the guideline. The observed σΔV values (66.63/26.39/27.40) being
+4-11× *larger* than that 6.0 target (not just larger than an arbitrary external rule) suggests the
+boost has grown beyond what the short calibration window anticipated — plausibly because `k`/`E`
+are frozen at calibration time while the system's actual sampled energy range keeps growing over a
+much longer subsequent run. Consistent with `control` (165 ns combined, worst overshoot at 11×)
+having run far longer than either dome system (35-49 ns, ~4.5× overshoot) — a real, checkable
+correlation, though not yet confirmed as causal.
+
+**Retracted (Sep 18)**: this section originally claimed the sigma0=4-vs-6 comparison showed "nearly
+identical boost statistics" and treated that as evidence against lowering sigma0. That comparison
+was never actually completed — see the correction above. The sigma0-tuning question remains open.
+The queued asymmetric-sigma0 test (P=2.0/D=6.0, job 59247853, see above) plus the new PI-requested
+P=4.0/D=6.0 full-length experiment (see the Sep 18 experiment-planning entry) are the real tests of
+whether this path works, once both actually run to completion.
+
+**Not yet done**: an actual empirical reweighting test (run `PyReweighting` on a real reaction
+coordinate, e.g. Rg_xy, and check 2nd-order vs. exact-exponential-average agreement, or block-wise
+consistency) — the formal 10kT check only establishes that the *safety margin* for the simplest
+reweighting method is gone, not that reweighting itself is confirmed to fail. Proposed as the next
+concrete step; not started.
+
+**Files persisted**: `scripts/analysis/gamd_convergence_full.R` (new — combines all 3 checks +
+anharmonicity + the two artifact fixes above in one script), plotting outputs and summary CSV in
+`analysis/gamd_convergence/` (`{control,dome_model,dome_bact}_dV_vs_time.png`,
+`_dV_distribution.png`, `haddadian_convergence_summary.csv`).
+
+### Beagle3 and Midway3 confirmed to share one SLURM queue — not separate resource pools
+
+While investigating whether 4 GPU-cap-`PENDING` jobs (`gamd-full-bact-equil3`, `dome-bact-prod`,
+`gamd-control-sigma-asym-cont`, `gamd-control-fullelec2-noGaMD`) could be run from Midway3 instead:
+`squeue -u junseo` run from Midway3 shows the **exact same job IDs**, same states, same partition
+name (`beagle3`) as running it from Beagle3 — they're two login-node names into one shared SLURM
+controller/queue, not two independent clusters with separate allocations (this refines, not
+contradicts, the earlier-established fact that `/scratch/beagle3` is also GPFS-mounted on Midway3 —
+the filesystem AND the scheduler are both shared). Root cause of the pending jobs: the `gpu` QOS
+caps this account at **16 GPUs/user**; the 8 currently-running jobs (2 GPU each) are already at
+16/16. User's decision: leave as-is, let it resolve naturally (running jobs are wall-time-limited to
+4 days and self-stop at their chunk caps anyway) rather than manually stop anything; the two
+`control` side-tests are the natural first candidates to deprioritize if a slot needs freeing later,
+being diagnostic rather than core production.
+
+---
+
+## September 7-9, 2026 — Disk-quota crisis found and resolved, GaMD migrated to resident mode fleet-wide, external config review addressed, new tuning tests launched
+
+### Beagle3 disk quota exceeded for days, silently blocking every job
+
+Found via "the queue is empty" — every job that tried to write anything had been failing with
+`FATAL ERROR: Disk quota exceeded` since usage crossed the 400G soft limit and the grace period
+expired (`rcchelp quota`: 523.49G used / 400G soft / 1024G hard, `expired`). Not a per-job bug; every
+GaMD/NAMD job across all 5 systems was affected simultaneously, several with corrupted (0-byte or
+truncated) restart checkpoints from being killed mid-write.
+
+**Freed ~155G total, all confirmed zero-risk to active work**, in order:
+- ~29G of `.BAK_predisk`/`.old`/`.rebuilt`/`.BAK` backup files (safety copies from a past
+  restart-corruption incident, redundant once the current files were confirmed healthy)
+- Old completed Martini variants v1-v13 (~50G+) — all fully analyzed (restraint-scheme sweep
+  conclusions unchanged) with confirmed-complete local copies first; `martini-sweep-v12`'s leftover
+  logs/configs also cleared after its trajectory data was already removed
+- `full-model-viz` (7.6G) — confirmed stale duplicate subset of `full-model/namd`'s own data
+- `combined_4nsframe`/`gamd_all_1nsframe` derived files on cluster (~5G) — byte-identical to
+  already-pulled local copies, trivially regenerable
+- **The big one: 41.6G of stale non-latest NAMD restart checkpoints** (151/140/194/55/67 checkpoint
+  sets across the 5 systems, when only the single latest is ever needed to resume) — pure
+  restart-bookkeeping, doesn't touch the actual `step7_N.dcd` trajectory data at all
+
+**A real mistake happened during the restart-checkpoint cleanup and was caught before causing
+permanent damage.** "Keep only the numerically highest checkpoint" is not equivalent to "keep the
+last known-good checkpoint" — `control`'s highest-numbered restart set (`step7_186`) turned out to
+be from an *incomplete*, quota-crashed segment; the ledger (`cumulative_ns.txt`, the actual source of
+truth for `run_prod_gpu.sh`'s self-healing resume logic) still pointed at `step7_185`, whose own
+restart files I'd just deleted. Same problem independently hit `full-model` and `full-bact`, which
+had a *different* dependency (their GaMD setup's `step7_21.restart`, not their latest) broken by the
+same blanket cleanup. **Recovery method, used three times**: NAMD's separate *regular* (non-restart)
+final-output files — `step7_N.coor`/`.vel`/`.xsc` without `.restart` in the name — are the same
+binary format and get written once at clean segment completion, independent of the periodic restart
+checkpoint. Copying these into the expected `.restart.*` filenames restored a fully valid checkpoint
+in all three cases. **Lesson for any future cleanup**: "latest by number" and "latest by the
+consuming script's own bookkeeping" are not guaranteed to be the same file — check the actual
+resume-logic dependency (ledger, or whatever a downstream job's `.inp` references), not just
+`ls | sort -n | tail -1`.
+
+Confirmed the block was truly lifted via an actual test write (`dd`), not just trusting the (cached,
+periodically-updated, not live) `rcchelp quota` number. Final usage: 371G, ~29G of margin under the
+400G soft quota.
+
+### All 5 systems' GaMD migrated to the fixed GPU-resident build
+
+With the Sep 3-4 fix validated, migrated `control` (GaMD prod), `dome-model` (GaMD prod),
+`dome-bact` (GaMD final equilibration segment), and `full-model`/`full-bact` (GaMD equilibration,
+first-ever start) all onto `namd-main-build` with `CUDASOAintegrate on`, standardized to 2 GPU/16 PE
+(matching the validated benchmark config, not each system's previously-inconsistent GPU count).
+`dome-bact`'s equilibration completed fully during this window (reached 22.5M/22.5M steps) and
+transitioned to its first production segment, same equil→prod pattern as `control`/`dome-model`
+used earlier (accelMDGcMDSteps/EquiSteps left unchanged so E/k stay frozen).
+
+**Separately found and fixed while auditing**: `control`'s *plain* (non-GaMD) NAMD production had
+been running offload on 4 GPU the whole time (`CUDASOAintegrate` missing entirely from
+`step7_production.inp`), discovered because its GaMD (2 GPU resident, ~21.5 ns/day) was running much
+faster than its own plain production (4 GPU offload, 6.19 ns/day) on the *same system* — a
+discrepancy that shouldn't exist. No documented benchmark ever justified control's 4-GPU config
+specifically; looks like a historical carry-over from however it was first launched. This project's
+own ~35-config benchmark sweep already found multi-GPU scaling non-monotonic for these system sizes
+(3-4 GPU regresses *below* 1-GPU resident performance) — control was very likely losing on both the
+wrong-mode and wrong-GPU-count axes simultaneously. Fixed to resident + 2 GPU, matching the other 4
+systems; jumped to ~23.9 ns/day. Also found CLAUDE.md's FtsH section was stale, still claiming
+"resident mode crashes these systems" for `full-model`/`full-bact` when they'd actually been running
+resident successfully since Aug 22 (a `margin` setting fix, not documented as resolved at the time).
+
+### Dr. Haddadian's external config review (via Claude, reviewing `control`'s `gamd-prod5.inp`)
+
+Reviewed critically rather than applied wholesale — several "high priority" items didn't survive
+scrutiny:
+- **Factual error underlying several recommendations**: the review assumed 1.8M atoms; the reviewed
+  file (confirmed via matching `firsttimestep`/`run`/restart values) is unmistakably `control`'s own
+  config, 632,689 atoms, no protein. Several size-based justifications don't apply as stated.
+  Ironically the same category of atom-count/system mismatch as this session's own GPU
+  misconfiguration audit made harder to spot until directly checked.
+- **`margin 5` → `10`**: not an oversight — documented as the specific fix for a real resident-mode
+  crash on the FtsH systems. No clear benefit to increasing further; the current value already works.
+- **`fullElectFrequency 1` → `2`**: also a documented resident-mode requirement, and specifically
+  risky for GaMD given the bug just fixed was entirely about needing accurate per-step energies for
+  correct boost statistics — multi-timestepping PME right after that lesson warrants an actual test,
+  not an assumption either way.
+- **"sigma0=6 gives near-zero boost" claim**: contradicted by data already in hand — the sigma0=4 vs
+  6 comparison's real `.gamd` log values show k=4.64e-06 (TOTAL, sigma0=6), a real, active,
+  non-zero scaling factor.
+- **"run 22500000 doesn't match the step-count sum" flag**: a math error, not a real inconsistency —
+  treats `accelMDGcMDPrepSteps`/`EquiPrepSteps` as additive time on top of
+  `accelMDGcMDSteps`/`EquiSteps` rather than sub-phases within them. `7.5M + 15M = 22.5M` matches
+  `run 22500000` exactly.
+- **Legitimately worth adopting**: `restartfreq` 5000→25000 (I/O reduction, good timing given the
+  quota trouble). **Legitimately worth discussing, not a free win**: extending
+  `accelMDGcMDPrepSteps`/`EquiPrepSteps` to 3M — reasonable science question, but that value was
+  deliberately halved from Rajiv's original 4M template specifically to fit wall-clock budget when
+  the schedule was compressed; extending it reopens that tradeoff.
+
+**Two of the genuinely open questions are now running as isolated tests** on `control`, branched
+from the same `step7_21.restart` checkpoint as the sigma0=4 test: `fullElectFrequency=2` (jobs
+57990267) and `sigma0=2.0` (job 57990269, the PI's own suggested value, extending the sigma0=4 vs 6
+comparison to a third point).
+
+### Follow-up correspondence with Dr. Chen, another tuning suggestion being tested before adopting
+
+Sent Dr. Chen the config files directly (separately from the mailing-list angle -- confirmed a real
+GaMD mailing list exists, `gamd-discuss@lists.sourceforge.net` via SourceForge, run out of Miao Lab
+for method/algorithm-level questions, distinct from NAMD-implementation questions). He suggested
+**removing `margin` and `stepspercycle` entirely** (not just tuning) for faster GPU-resident
+performance. Same caution as before: `margin 5` specifically fixed a documented crash on the FtsH
+systems, so this is being verified via an isolated test on `full-model` (job 57992449, where the
+original crash happened, not on `control` which never hit that failure mode) before adopting
+anywhere live -- not applied directly despite coming from the developer who wrote the resident-mode
+code, given the concrete crash history on the line.
+
+### Status at session close
+
+Queue: `control`/`dome-model`/`dome-bact` NAMD production and GaMD all running or queued;
+`full-model`/`full-bact` NAMD production queued, GaMD equilibration running (cMD phase, ~20-24%);
+two `control` GaMD side-tests (sigma0=2.0, fullElectFrequency=2) and one `full-model` side-test
+(no margin/stepspercycle) all queued/running, none touching live production data.
+
+---
+
+## September 3-4, 2026 — GPU-resident GaMD corruption bug fixed upstream, re-validated; sigma0=4 test launched; idle-job sweep
+
+### GPU-resident GaMD: reported the Aug 3-5 corruption bug to Dr. Chen, he pointed to a fix, rebuilt and re-validated
+
+Drafted and sent a follow-up to Dr. Chen (reply to the existing MR 489/504 thread) reporting the
+concrete reproduction of the boost-statistics corruption found Aug 3-5 (job 52975499): energies
+match offload to 0.008%, but `Vmin` collapses to 0/−2.4e7 on the first statistics update after a
+restart, `sigmaV` inflating ~4,500-6,200×. Framed it as a real blocker — stuck on offload (~3×
+slower) for all three ongoing GaMD runs to avoid the corrupted statistics.
+
+**Chen's reply**: try the latest `main` branch — several fixes landed after the GaMD feature merge,
+including commit `cc69db49` ("fix: force the computeEnergies to 1 when aMD/GaMD is enabled"), which
+matches the symptom exactly (stale/uninitialized value entering the statistics accumulator is
+consistent with energies not being computed every step). Also warned off stochastic velocity
+rescaling for now (separate pending bug) — not relevant here, this project's GaMD configs use
+`langevin on`.
+
+**Getting `main` onto Beagle3 turned into its own saga.** The existing clone
+(`namd-chen-gpuresident/`, HTTPS remote to `gitlab.com/tcbgUIUC/namd.git`) had no cached
+credentials — the original access grant (David Hardy, Jul 23) was presumably used interactively at
+clone time and never persisted. `git fetch` over HTTPS with a GitLab **classic** personal access
+token (`read_repository` scope) got a 403: `Access denied: This operation requires a fine-grained
+personal access token with the following project permissions: [Code: Download]`. A **fine-grained**
+token with `Code: Download` on the specific project got the *same* 403 — the "Code" resource never
+appeared in the fine-grained token UI at all (only "Repository", which grants create/read/update/
+delete but apparently not what this specific 403 wants). Abandoned HTTPS+PAT entirely and switched
+to **SSH key auth**: generated a dedicated key on Beagle3 (`~/.ssh/gitlab_namd`), added its pubkey
+to GitLab, added an SSH config `Host gitlab-namd` alias (had to `chmod 600 ~/.ssh/config` first —
+SSH silently refuses a too-permissive config file, distinct error from a bad key), then
+`git remote set-url origin gitlab-namd:tcbgUIUC/namd.git`. Fetch worked immediately. Confirmed
+`cc69db49` present in the fetched `main`.
+
+**Built without a full rebuild of dependencies**: `git worktree add /scratch/beagle3/junseo/namd-main-build origin/main`
+off the same clone (shares the object database, independent working tree — avoids a second
+multi-GB clone/download). Symlinked the already-built `charm-8.0.0` (multicore-linux-x86_64),
+`tcl`, and `fftw` directories in from the old `namd-chen-gpuresident/` build — these are
+version-pinned dependencies independent of the NAMD source checkout, no need to rebuild. Ran
+`./config` with the identical flags as the original build (confirmed via the old build's
+`Make.config`), submitted the same 1-GPU/16-thread build job used originally (which had taken 9m02s
+per `sacct` on job 52581344) — this one also completed clean, `namd3` binary present.
+
+**Re-ran the exact same validation** (`dome-bact/gamd_resident_val_mainbranch/`, symlinked to the
+original test's input files and starting checkpoint — `gamd-equil.restart.*` at step 5,410,000,
+identical 200,000-step `.inp`, only the binary path changed) against the offload reference
+(`gamd/gamd-equil2.log`) at the exact matching step (5,610,000):
+
+| | offload (reference) | old resident (corrupted) | new resident (fixed) |
+|---|---|---|---|
+| DIHED Vmin | 223,155 | 0 | 223,257 |
+| DIHED sigmaV | 207.8 | 86,151 | 192.3 |
+| TOTAL Vmin | −5.06679e6 | −2.39e7 | −5.06679e6 (exact) |
+| TOTAL sigmaV | 1,167.6 | 7,255,680 | 1,161.3 |
+
+**Bug confirmed fixed.** Performance: 7.21 ns/day (down from the old buggy build's 8.22 ns/day —
+expected, since the fix computes energies every step — but still ~2.6× over offload's ~2.77 ns/day).
+CLAUDE.md's "GPU-resident GaMD REJECTED" section updated to reflect this; **migration of the three
+live GaMD runs (control/dome-model/dome-bact) to this build has NOT happened yet** — a real decision
+still pending, not implied by the validation alone.
+
+### sigma0=4.0 test launched (control)
+
+User asked whether `accelMDGsigma0P`/`accelMDGsigma0D` (currently 6.0/6.0, inherited unchanged from
+Rajiv's original template — the only GaMD parameter that WASN'T reduced when this project's schedule
+was compressed from Rajiv's 50M/100ns to the current 22.5M/45ns to fit a feasible wall-clock budget,
+see the July 22 archive entry) had ever been tested at 4.0, the value found closer to GaMD's official
+1-2M `ntcmd` guidance in spirit. Never tried — confirmed via grep, `sigma0` only ever appears as 6.0
+anywhere in this log. Set up as a full equilibration-schedule restart (sigma0 only matters during
+cMD/equilibration — it's what computes the frozen E/k boost parameters, so unlike a timestep test
+this can't branch off an already-equilibrated checkpoint the way v15/v16 did). Branched from
+control's original pre-GaMD checkpoint (`step7_21.restart`, same as the sigma0=6 run), directory
+`control/gamd-sigma4/` (symlinked shared inputs), only `accelMDGsigma0P`/`D` changed 6.0→4.0.
+Submitted as job 57683980 (queued as of session end).
+
+### Idle-job sweep
+
+Found `dome-model-prod`, `dome-bact-prod`, `full-bact-prod` all finished cleanly (chunk-cap idle,
+the standing recurring pattern) and resubmitted. Found `dome-bact`'s GaMD equilibration
+(`gamd-equil3`) had hit its 96h wall at 96.0% (21.61M/22.5M steps, ~1.8 ns short of done) — not a
+crash. `make_gamd_restart.py dome-bact` initially failed on a stale, abandoned `gamd-equil4` attempt
+from Aug 22 (an `.inp`+`.log` existed but no restart files were ever written — crashed early, never
+actually ran) that the script's latest-segment detection tripped on. Archived those three files to
+`dome-bact/gamd/superseded_equil4_aug22/` (not deleted), reran the script — correctly picked up
+`gamd-equil3`'s real, current checkpoint and generated a proper final segment (890,000 steps to
+exactly complete the 22.5M-step schedule). Submitted as job 57797990.
+
+---
+
 ## August 8-15, 2026 — GaMD requeue data loss root-caused, full-model/full-bact equilibration debugged,
 ## v10/v11 read out (real SS does NOT fix pre-collapse), all-11-variant VMD tooling, idle-job sweep
 
